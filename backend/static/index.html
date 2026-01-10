@@ -1168,6 +1168,42 @@
             letter-spacing: 0;
         }
 
+        /* Exceptional quality emissive glow effect (quality >= 90%) */
+        .ascii-viewport .exceptional-quality {
+            animation: exceptional-glow 2s ease-in-out infinite;
+            filter: drop-shadow(0 0 6px gold);
+        }
+
+        @keyframes exceptional-glow {
+            0%, 100% {
+                filter: drop-shadow(0 0 4px gold) drop-shadow(0 0 8px rgba(255, 215, 0, 0.5));
+            }
+            50% {
+                filter: drop-shadow(0 0 8px gold) drop-shadow(0 0 16px rgba(255, 215, 0, 0.7));
+            }
+        }
+
+        /* High quality glow effect (quality >= 75% but < 90%) */
+        .ascii-viewport .high-quality {
+            filter: drop-shadow(0 0 3px silver);
+        }
+
+        /* Durability red tint - increases as durability decreases */
+        .ascii-viewport .durability-critical {
+            /* Near-zero durability (< 20%) - strong red tint */
+            filter: sepia(1) saturate(5) hue-rotate(-50deg) brightness(0.8);
+        }
+
+        .ascii-viewport .durability-low {
+            /* Low durability (20-50%) - moderate red tint */
+            filter: sepia(0.5) saturate(3) hue-rotate(-30deg) brightness(0.9);
+        }
+
+        .ascii-viewport .durability-worn {
+            /* Worn durability (50-75%) - slight red/orange tint */
+            filter: sepia(0.3) saturate(1.5) hue-rotate(-20deg);
+        }
+
         .ascii-viewport .blocked {
             color: #666;
         }
@@ -1368,6 +1404,129 @@
             font-size: 12px;
             color: var(--text-muted);
             text-align: center;
+        }
+
+        /* Crafting particles container */
+        .crafting-particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        /* Individual particle */
+        .crafting-particle {
+            position: absolute;
+            font-size: 16px;
+            animation: particle-float 2s ease-out infinite;
+            opacity: 0.8;
+        }
+
+        @keyframes particle-float {
+            0% {
+                transform: translateY(0) scale(1);
+                opacity: 0.8;
+            }
+            50% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-40px) scale(0.5);
+                opacity: 0;
+            }
+        }
+
+        /* Different particle types for different crafts */
+        .crafting-particle.spark {
+            color: #ff6600;
+            text-shadow: 0 0 5px #ff9900;
+        }
+
+        .crafting-particle.steam {
+            color: #cccccc;
+            text-shadow: 0 0 8px #ffffff;
+        }
+
+        .crafting-particle.thread {
+            color: #9966ff;
+            text-shadow: 0 0 5px #cc99ff;
+        }
+
+        .crafting-particle.magic {
+            color: #00ffff;
+            text-shadow: 0 0 10px #66ffff;
+        }
+
+        .crafting-particle.wood {
+            color: #8b4513;
+            text-shadow: 0 0 3px #cd853f;
+        }
+
+        /* Workshop ambient particle emitters */
+        .workshop-particles-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 5;
+        }
+
+        .workshop-ambient-particle {
+            position: absolute;
+            font-size: 12px;
+            animation: workshop-particle-float 3s ease-out forwards;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        @keyframes workshop-particle-float {
+            0% {
+                transform: translateY(0) scale(0.8);
+                opacity: 0.7;
+            }
+            50% {
+                opacity: 0.9;
+            }
+            100% {
+                transform: translateY(-30px) translateX(10px) scale(0.3);
+                opacity: 0;
+            }
+        }
+
+        .workshop-ambient-particle.spark {
+            color: #ff6600;
+            text-shadow: 0 0 4px #ff9900;
+        }
+
+        .workshop-ambient-particle.steam {
+            color: #aaaaaa;
+            text-shadow: 0 0 6px #ffffff;
+        }
+
+        .workshop-ambient-particle.magic {
+            color: #9966ff;
+            text-shadow: 0 0 8px #cc99ff;
+            animation: workshop-particle-magic 2.5s ease-out forwards;
+        }
+
+        @keyframes workshop-particle-magic {
+            0% {
+                transform: translateY(0) rotate(0deg) scale(0.8);
+                opacity: 0.8;
+            }
+            50% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-25px) rotate(180deg) scale(0.4);
+                opacity: 0;
+            }
         }
 
         /* Celebration effect */
@@ -1968,6 +2127,9 @@
             // Load zone data and render viewport
             await loadZoneData();
             renderViewport();
+
+            // Start workshop ambient particle emitters
+            startWorkshopParticles();
         }
 
         // Update monster panel in game screen
@@ -3021,7 +3183,146 @@
             }, 1000); // Poll every second
         }
 
-        // Show crafting progress indicator
+        // Get particle configuration based on workshop type
+        function getParticleConfig(workshopType) {
+            const configs = {
+                'smithing': { particles: ['⚡', '🔥', '✨'], class: 'spark', count: 5 },
+                'smelting': { particles: ['🔥', '💨', '⚡'], class: 'spark', count: 6 },
+                'forging': { particles: ['⚡', '🔨', '✨'], class: 'spark', count: 5 },
+                'cooking': { particles: ['💨', '☁️', '🍳'], class: 'steam', count: 4 },
+                'brewing': { particles: ['💨', '🫧', '☁️'], class: 'steam', count: 5 },
+                'spinning': { particles: ['🧵', '✨', '〰️'], class: 'thread', count: 4 },
+                'weaving': { particles: ['🧶', '✨', '🧵'], class: 'thread', count: 4 },
+                'alchemy': { particles: ['✨', '💫', '⭐'], class: 'magic', count: 6 },
+                'enchanting': { particles: ['✨', '💫', '🌟'], class: 'magic', count: 6 },
+                'carpentry': { particles: ['🪵', '🪓', '✨'], class: 'wood', count: 4 },
+                'woodworking': { particles: ['🪵', '🔨', '✨'], class: 'wood', count: 4 },
+                'general': { particles: ['✨', '⭐', '💫'], class: 'magic', count: 3 }
+            };
+            return configs[workshopType?.toLowerCase()] || configs['general'];
+        }
+
+        // Generate particles HTML
+        function generateParticlesHtml(workshopType) {
+            const config = getParticleConfig(workshopType);
+            let particlesHtml = '<div class="crafting-particles">';
+
+            for (let i = 0; i < config.count; i++) {
+                const particle = config.particles[Math.floor(Math.random() * config.particles.length)];
+                const left = 10 + Math.random() * 80;  // 10-90% horizontal position
+                const delay = Math.random() * 2;  // 0-2s delay
+                const duration = 1.5 + Math.random() * 1;  // 1.5-2.5s duration
+
+                particlesHtml += `<span class="crafting-particle ${config.class}" style="left: ${left}%; bottom: 0; animation-delay: ${delay}s; animation-duration: ${duration}s;">${particle}</span>`;
+            }
+
+            particlesHtml += '</div>';
+            return particlesHtml;
+        }
+
+        // Workshop ambient particle emitter system
+        let workshopParticleInterval = null;
+
+        // Get workshop particle configuration
+        function getWorkshopAmbientConfig(workshopType) {
+            const configs = {
+                'smithing': { particles: ['🔥', '⚡', '✨'], class: 'spark', rate: 800 },
+                'blacksmith': { particles: ['🔥', '⚡', '✨'], class: 'spark', rate: 800 },
+                'forge': { particles: ['🔥', '⚡', '✨'], class: 'spark', rate: 700 },
+                'cooking': { particles: ['💨', '☁️', '🍳'], class: 'steam', rate: 1000 },
+                'kitchen': { particles: ['💨', '☁️', '🍳'], class: 'steam', rate: 1000 },
+                'bakery': { particles: ['💨', '☁️', '🥖'], class: 'steam', rate: 1200 },
+                'enchanting': { particles: ['✨', '💫', '🌟'], class: 'magic', rate: 600 },
+                'arcane': { particles: ['✨', '💫', '⭐'], class: 'magic', rate: 600 },
+                'alchemy': { particles: ['💨', '✨', '🧪'], class: 'magic', rate: 900 },
+                'weaving': { particles: ['🧵', '✨'], class: 'steam', rate: 1500 },
+                'general': { particles: ['✨'], class: 'magic', rate: 2000 }
+            };
+            return configs[workshopType?.toLowerCase()] || configs['general'];
+        }
+
+        // Spawn a workshop ambient particle
+        function spawnWorkshopParticle(workshop, viewportElement) {
+            const workshopType = workshop.metadata?.workshop_type || 'general';
+            const config = getWorkshopAmbientConfig(workshopType);
+
+            // Calculate workshop position in viewport
+            const viewportRect = viewportElement.getBoundingClientRect();
+            const cellWidth = 8;  // pixels per cell
+            const cellHeight = 16;
+
+            // Get camera offset (center of viewport is monster position)
+            const viewportWidthCells = 60;
+            const viewportHeightCells = 20;
+            const cameraX = (activeMonster?.x || 0) - Math.floor(viewportWidthCells / 2);
+            const cameraY = (activeMonster?.y || 0) - Math.floor(viewportHeightCells / 2);
+
+            // Workshop position relative to camera
+            const workshopScreenX = (workshop.x - cameraX) * cellWidth;
+            const workshopScreenY = (workshop.y - cameraY) * cellHeight;
+            const workshopWidth = (workshop.width || 4) * cellWidth;
+            const workshopHeight = (workshop.height || 4) * cellHeight;
+
+            // Only spawn if workshop is visible
+            if (workshopScreenX < -workshopWidth || workshopScreenX > viewportWidthCells * cellWidth ||
+                workshopScreenY < -workshopHeight || workshopScreenY > viewportHeightCells * cellHeight) {
+                return;
+            }
+
+            // Create particle element
+            const particle = document.createElement('span');
+            particle.className = `workshop-ambient-particle ${config.class}`;
+            particle.textContent = config.particles[Math.floor(Math.random() * config.particles.length)];
+
+            // Random position within workshop bounds
+            const particleX = workshopScreenX + Math.random() * workshopWidth;
+            const particleY = workshopScreenY + Math.random() * workshopHeight;
+
+            particle.style.left = `${particleX}px`;
+            particle.style.top = `${particleY}px`;
+
+            // Add to container
+            let container = viewportElement.querySelector('.workshop-particles-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.className = 'workshop-particles-container';
+                viewportElement.style.position = 'relative';
+                viewportElement.appendChild(container);
+            }
+            container.appendChild(particle);
+
+            // Remove particle after animation
+            setTimeout(() => particle.remove(), 3000);
+        }
+
+        // Start workshop particle emitters
+        function startWorkshopParticles() {
+            if (workshopParticleInterval) return;
+
+            const viewportElement = document.querySelector('.ascii-viewport');
+            if (!viewportElement) return;
+
+            workshopParticleInterval = setInterval(() => {
+                const workshops = zoneEntities.filter(e => e.entity_type === 'workshop');
+                workshops.forEach(workshop => {
+                    const config = getWorkshopAmbientConfig(workshop.metadata?.workshop_type);
+                    // Random chance based on rate
+                    if (Math.random() < (500 / config.rate)) {
+                        spawnWorkshopParticle(workshop, viewportElement);
+                    }
+                });
+            }, 500);
+        }
+
+        // Stop workshop particle emitters
+        function stopWorkshopParticles() {
+            if (workshopParticleInterval) {
+                clearInterval(workshopParticleInterval);
+                workshopParticleInterval = null;
+            }
+        }
+
+        // Show crafting progress indicator with particles
         function showCraftingProgress(status) {
             let progressOverlay = document.getElementById('crafting-progress-overlay');
             if (!progressOverlay) {
@@ -3033,8 +3334,11 @@
 
             const progressPercent = Math.round(status.progress * 100);
             const timeRemaining = status.time_remaining || 0;
+            const workshopType = status.workshop_type || 'general';
+            const particlesHtml = generateParticlesHtml(workshopType);
 
             progressOverlay.innerHTML = `
+                ${particlesHtml}
                 <div class="crafting-progress-content">
                     <h4>Crafting: ${status.recipe_name}</h4>
                     <div class="progress-bar">
@@ -3457,7 +3761,34 @@
                             // Only render at the item's origin position
                             if (entity.x === worldX) {
                                 char = getItemEmoji(entity);
-                                colorClass = 'item item-emoji';
+                                // Check quality for glow effects
+                                // Quality is stored as 0-100 scale (percentage)
+                                const quality = entity.metadata?.quality;
+                                let qualityClass = '';
+                                if (quality !== undefined) {
+                                    if (quality >= 90) {
+                                        qualityClass = ' exceptional-quality';  // Gold glow
+                                    } else if (quality >= 75) {
+                                        qualityClass = ' high-quality';  // Silver glow
+                                    }
+                                }
+
+                                // Check durability for red tint effects
+                                const durability = entity.metadata?.durability;
+                                const maxDurability = entity.metadata?.max_durability;
+                                let durabilityClass = '';
+                                if (durability !== undefined && maxDurability !== undefined && maxDurability > 0) {
+                                    const durabilityPercent = (durability / maxDurability) * 100;
+                                    if (durabilityPercent < 20) {
+                                        durabilityClass = ' durability-critical';  // Strong red tint
+                                    } else if (durabilityPercent < 50) {
+                                        durabilityClass = ' durability-low';  // Moderate red tint
+                                    } else if (durabilityPercent < 75) {
+                                        durabilityClass = ' durability-worn';  // Slight tint
+                                    }
+                                }
+
+                                colorClass = 'item item-emoji' + qualityClass + durabilityClass;
                                 isDoubleWidth = true;
                             } else {
                                 // This is the second cell of the item - skip rendering

@@ -1919,6 +1919,7 @@ class CraftingStatus(BaseModel):
     is_crafting: bool
     recipe_id: Optional[int] = None
     recipe_name: Optional[str] = None
+    workshop_type: Optional[str] = None  # Workshop type for particle effects
     progress: float = 0.0  # 0.0 to 1.0
     time_remaining: Optional[int] = None  # In game seconds
     input_items: list = []
@@ -2063,6 +2064,7 @@ async def select_recipe(workshop_id: str, request: SelectRecipeRequest, token: s
                 is_crafting=workshop_metadata.get('is_crafting', False),
                 recipe_id=recipe.id,
                 recipe_name=recipe.name,
+                workshop_type=workshop_metadata.get('workshop_type', 'general'),
                 progress=progress,
                 time_remaining=time_remaining,
                 input_items=input_items,
@@ -2252,6 +2254,7 @@ async def get_workshop_status(workshop_id: str, token: str):
             is_crafting=workshop_metadata.get('is_crafting', False),
             recipe_id=recipe_id,
             recipe_name=recipe_name,
+            workshop_type=workshop_metadata.get('workshop_type', 'general'),
             progress=progress,
             time_remaining=time_remaining,
             input_items=workshop_metadata.get('input_items', []),
