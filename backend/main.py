@@ -1058,6 +1058,32 @@ def can_monster_push_item(monster: Monster, entity: Entity) -> tuple[bool, str]:
     return True, ""
 
 
+def is_position_on_wagon(wagon: Entity, x: int, y: int) -> bool:
+    """Check if position (x, y) is on the wagon's area.
+
+    Wagons are multi-cell entities (typically 2x2).
+    """
+    wagon_width = wagon.width or 2
+    wagon_height = wagon.height or 2
+    return (wagon.x <= x < wagon.x + wagon_width and
+            wagon.y <= y < wagon.y + wagon_height)
+
+
+def get_wagon_capacity(wagon: Entity) -> int:
+    """Get the storage capacity of a wagon.
+
+    Default capacity is 4 items (one per cell of 2x2 wagon).
+    """
+    metadata = wagon.entity_metadata or {}
+    return metadata.get('capacity', 4)
+
+
+def get_wagon_loaded_items(wagon: Entity) -> list:
+    """Get the list of items loaded in a wagon."""
+    metadata = wagon.entity_metadata or {}
+    return metadata.get('loaded_items', [])
+
+
 def calculate_skill_decay(monster: Monster) -> dict:
     """Calculate decayed skill values based on time since last use.
 
@@ -1731,68 +1757,124 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                                 slot_y=push_y
                             )
                         else:
-                            # 6. No other item at push destination (handles multi-cell entities)
-                            is_blocked = await is_position_blocked_by_entity(
-                                session, monster.current_zone_id, push_x, push_y,
-                                entity_types=["item", "wagon"],
-                                exclude_entity_id=item_at_target.id  # Don't count the item being pushed
-                            )
-                            if is_blocked:
-                                # Can't push into another item or wagon - clear push protection
-                                item_push_metadata.pop('being_pushed_by', None)
-                                item_at_target.entity_metadata = item_push_metadata
-                                flag_modified(item_at_target, 'entity_metadata')
-                                return MoveResult(monster=monster_to_info(monster))
-
-                            # Check if item was ON a dispenser (pushing FROM dispenser)
-                            # new_x, new_y is where the item currently is (source position)
-                            dispenser_at_source = await session.execute(
+                            # 6. Check if push destination is a wagon (load item into wagon)
+                            wagon_result = await session.execute(
                                 select(Entity).where(
                                     Entity.zone_id == monster.current_zone_id,
-                                    Entity.x == new_x,
-                                    Entity.y == new_y,
-                                    Entity.entity_type == "dispenser"
+                                    Entity.entity_type == "wagon"
                                 )
                             )
-                            source_dispenser = dispenser_at_source.scalar_one_or_none()
+                            wagons_nearby = wagon_result.scalars().all()
 
-                            # Push is valid - move the item
-                            item_metadata = item_at_target.entity_metadata or {}
-                            pushed_item_name = item_metadata.get('name', 'Unknown Item')
-                            item_at_target.x = push_x
-                            item_at_target.y = push_y
+                            target_wagon = None
+                            for wagon in wagons_nearby:
+                                if is_position_on_wagon(wagon, push_x, push_y):
+                                    target_wagon = wagon
+                                    break
 
-                            # Update transporter for share tracking and clear push protection
-                            item_metadata['last_transporter_commune_id'] = monster.commune_id
-                            item_metadata.pop('being_pushed_by', None)  # Clear active-push protection
-                            item_at_target.entity_metadata = item_metadata
-                            flag_modified(item_at_target, 'entity_metadata')
+                            if target_wagon and item_at_target.entity_type == "item":
+                                # Load item into wagon
+                                wagon_metadata = target_wagon.entity_metadata or {}
+                                loaded_items = wagon_metadata.get('loaded_items', [])
+                                capacity = get_wagon_capacity(target_wagon)
 
-                            # If pushing from a dispenser, spawn a new item if it has more
-                            if source_dispenser:
-                                dispenser_metadata = source_dispenser.entity_metadata or {}
-                                stored_count = dispenser_metadata.get('stored_count', 0)
+                                if len(loaded_items) >= capacity:
+                                    # Wagon is full - reject push
+                                    item_push_metadata.pop('being_pushed_by', None)
+                                    item_at_target.entity_metadata = item_push_metadata
+                                    flag_modified(item_at_target, 'entity_metadata')
+                                    return MoveResult(monster=monster_to_info(monster))
 
-                                if stored_count > 0:
-                                    # Decrement count and spawn new item
-                                    dispenser_metadata['stored_count'] = stored_count - 1
-                                    source_dispenser.entity_metadata = dispenser_metadata
-                                    flag_modified(source_dispenser, 'entity_metadata')
+                                # Store item data in wagon
+                                item_metadata = item_at_target.entity_metadata or {}
+                                loaded_items.append({
+                                    'name': item_metadata.get('name', 'Unknown Item'),
+                                    'good_type': item_metadata.get('good_type', 'unknown'),
+                                    'quality': item_metadata.get('quality', 50),
+                                    'loaded_at': datetime.utcnow().isoformat(),
+                                    'original_metadata': item_metadata
+                                })
 
-                                    # Create new item at dispenser location
-                                    new_item = Entity(
-                                        zone_id=monster.current_zone_id,
-                                        entity_type="item",
-                                        x=new_x,
-                                        y=new_y,
-                                        entity_metadata={
-                                            'name': dispenser_metadata.get('good_type', 'Item').replace('_', ' ').title(),
-                                            'good_type': dispenser_metadata.get('good_type', 'unknown'),
-                                            'quality': 5,
-                                            'from_dispenser': True
-                                        }
+                                wagon_metadata['loaded_items'] = loaded_items
+                                target_wagon.entity_metadata = wagon_metadata
+                                flag_modified(target_wagon, 'entity_metadata')
+
+                                # Get item name before deleting
+                                pushed_item_name = item_metadata.get('name', 'Unknown Item')
+
+                                # Delete the physical item entity (it's now in wagon)
+                                await session.delete(item_at_target)
+
+                                deposit_info = DepositInfo(
+                                    workshop_id=target_wagon.id,
+                                    workshop_name=f"Wagon ({len(loaded_items)}/{capacity} loaded)",
+                                    item_name=pushed_item_name,
+                                    slot_x=push_x,
+                                    slot_y=push_y
+                                )
+                            else:
+                                # 7. No other item at push destination (handles multi-cell entities)
+                                is_blocked = await is_position_blocked_by_entity(
+                                    session, monster.current_zone_id, push_x, push_y,
+                                    entity_types=["item", "wagon"],
+                                    exclude_entity_id=item_at_target.id  # Don't count the item being pushed
+                                )
+                                if is_blocked:
+                                    # Can't push into another item or wagon - clear push protection
+                                    item_push_metadata.pop('being_pushed_by', None)
+                                    item_at_target.entity_metadata = item_push_metadata
+                                    flag_modified(item_at_target, 'entity_metadata')
+                                    return MoveResult(monster=monster_to_info(monster))
+
+                                # Check if item was ON a dispenser (pushing FROM dispenser)
+                                # new_x, new_y is where the item currently is (source position)
+                                dispenser_at_source = await session.execute(
+                                    select(Entity).where(
+                                        Entity.zone_id == monster.current_zone_id,
+                                        Entity.x == new_x,
+                                        Entity.y == new_y,
+                                        Entity.entity_type == "dispenser"
                                     )
-                                    session.add(new_item)
+                                )
+                                source_dispenser = dispenser_at_source.scalar_one_or_none()
+
+                                # Push is valid - move the item
+                                item_metadata = item_at_target.entity_metadata or {}
+                                pushed_item_name = item_metadata.get('name', 'Unknown Item')
+                                item_at_target.x = push_x
+                                item_at_target.y = push_y
+
+                                # Update transporter for share tracking and clear push protection
+                                item_metadata['last_transporter_commune_id'] = monster.commune_id
+                                item_metadata.pop('being_pushed_by', None)  # Clear active-push protection
+                                item_at_target.entity_metadata = item_metadata
+                                flag_modified(item_at_target, 'entity_metadata')
+
+                                # If pushing from a dispenser, spawn a new item if it has more
+                                if source_dispenser:
+                                    dispenser_metadata = source_dispenser.entity_metadata or {}
+                                    stored_count = dispenser_metadata.get('stored_count', 0)
+
+                                    if stored_count > 0:
+                                        # Decrement count and spawn new item
+                                        dispenser_metadata['stored_count'] = stored_count - 1
+                                        source_dispenser.entity_metadata = dispenser_metadata
+                                        flag_modified(source_dispenser, 'entity_metadata')
+
+                                        # Create new item at dispenser location
+                                        new_item = Entity(
+                                            zone_id=monster.current_zone_id,
+                                            entity_type="item",
+                                            x=new_x,
+                                            y=new_y,
+                                            entity_metadata={
+                                                'name': dispenser_metadata.get('good_type', 'Item').replace('_', ' ').title(),
+                                                'good_type': dispenser_metadata.get('good_type', 'unknown'),
+                                                'quality': 5,
+                                                'from_dispenser': True
+                                            }
+                                        )
+                                        session.add(new_item)
 
         # Update position
         old_x, old_y = monster.x, monster.y
@@ -2766,6 +2848,189 @@ async def get_hitch_status(monster_id: str, token: str):
                 message="Wagon no longer exists",
                 hitched=False
             )
+
+
+class WagonUnloadRequest(BaseModel):
+    monster_id: str
+
+
+class WagonUnloadResponse(BaseModel):
+    message: str
+    unloaded_item: Optional[str] = None
+    remaining_items: int = 0
+    wagon_capacity: int = 4
+    item_position: Optional[dict] = None
+
+
+@app.post("/api/wagon/unload", response_model=WagonUnloadResponse, tags=["Wagons"])
+async def unload_wagon(request: WagonUnloadRequest, token: str):
+    """Unload an item from the monster's hitched wagon.
+
+    The item will be placed adjacent to the wagon in an empty cell.
+    The monster must be hitched to a wagon that contains items.
+    """
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Verify ownership
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(status_code=403, detail="You can only control your own monsters")
+
+        # Check if monster is hitched to a wagon
+        current_task = monster.current_task or {}
+        hitched_wagon_id = current_task.get('hitched_wagon_id')
+
+        if not hitched_wagon_id:
+            return WagonUnloadResponse(
+                message="Monster is not hitched to any wagon",
+                remaining_items=0
+            )
+
+        # Get the wagon
+        result = await session.execute(
+            select(Entity).where(Entity.id == hitched_wagon_id)
+        )
+        wagon = result.scalar_one_or_none()
+
+        if not wagon:
+            return WagonUnloadResponse(
+                message="Wagon no longer exists",
+                remaining_items=0
+            )
+
+        # Check if wagon has items
+        wagon_metadata = wagon.entity_metadata or {}
+        loaded_items = wagon_metadata.get('loaded_items', [])
+        capacity = get_wagon_capacity(wagon)
+
+        if not loaded_items:
+            return WagonUnloadResponse(
+                message="Wagon is empty",
+                remaining_items=0,
+                wagon_capacity=capacity
+            )
+
+        # Find an empty cell adjacent to the wagon to place the item
+        wagon_width = wagon.width or 2
+        wagon_height = wagon.height or 2
+
+        # Get all adjacent cells around the wagon
+        adjacent_cells = []
+        for x in range(wagon.x - 1, wagon.x + wagon_width + 1):
+            for y in range(wagon.y - 1, wagon.y + wagon_height + 1):
+                # Skip cells that are ON the wagon
+                if wagon.x <= x < wagon.x + wagon_width and wagon.y <= y < wagon.y + wagon_height:
+                    continue
+                adjacent_cells.append((x, y))
+
+        # Find first empty cell
+        empty_cell = None
+        for cell_x, cell_y in adjacent_cells:
+            if cell_x < 0 or cell_y < 0:
+                continue
+            # Check if cell is blocked
+            is_blocked = await is_position_blocked_by_entity(
+                session, monster.current_zone_id, cell_x, cell_y,
+                entity_types=["item", "wagon"]
+            )
+            if not is_blocked:
+                # Also check for monsters at this position
+                monster_result = await session.execute(
+                    select(Monster).where(
+                        Monster.current_zone_id == monster.current_zone_id,
+                        Monster.x == cell_x,
+                        Monster.y == cell_y
+                    )
+                )
+                if not monster_result.scalar_one_or_none():
+                    empty_cell = (cell_x, cell_y)
+                    break
+
+        if not empty_cell:
+            return WagonUnloadResponse(
+                message="No empty space adjacent to wagon for unloading",
+                remaining_items=len(loaded_items),
+                wagon_capacity=capacity
+            )
+
+        # Pop the first item from the wagon
+        item_data = loaded_items.pop(0)
+
+        # Create a new item entity at the empty cell
+        item_metadata = item_data.get('original_metadata', {})
+        if not item_metadata:
+            item_metadata = {
+                'name': item_data.get('name', 'Unknown Item'),
+                'good_type': item_data.get('good_type', 'unknown'),
+                'quality': item_data.get('quality', 50)
+            }
+
+        new_item = Entity(
+            zone_id=monster.current_zone_id,
+            entity_type="item",
+            x=empty_cell[0],
+            y=empty_cell[1],
+            entity_metadata=item_metadata
+        )
+        session.add(new_item)
+
+        # Update wagon metadata
+        wagon_metadata['loaded_items'] = loaded_items
+        wagon.entity_metadata = wagon_metadata
+        flag_modified(wagon, 'entity_metadata')
+
+        await session.commit()
+
+        item_name = item_data.get('name', 'Unknown Item')
+        return WagonUnloadResponse(
+            message=f"Unloaded {item_name} from wagon",
+            unloaded_item=item_name,
+            remaining_items=len(loaded_items),
+            wagon_capacity=capacity,
+            item_position={"x": empty_cell[0], "y": empty_cell[1]}
+        )
+
+
+@app.get("/api/wagon/{wagon_id}/contents", tags=["Wagons"])
+async def get_wagon_contents(wagon_id: str, token: str):
+    """Get the contents of a wagon."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the wagon
+        result = await session.execute(
+            select(Entity).where(Entity.id == wagon_id, Entity.entity_type == "wagon")
+        )
+        wagon = result.scalar_one_or_none()
+
+        if not wagon:
+            raise HTTPException(status_code=404, detail="Wagon not found")
+
+        wagon_metadata = wagon.entity_metadata or {}
+        loaded_items = wagon_metadata.get('loaded_items', [])
+        capacity = get_wagon_capacity(wagon)
+
+        return {
+            "wagon_id": wagon_id,
+            "position": {"x": wagon.x, "y": wagon.y},
+            "capacity": capacity,
+            "loaded_items": loaded_items,
+            "item_count": len(loaded_items),
+            "space_available": capacity - len(loaded_items)
+        }
 
 
 # =============================================================================
