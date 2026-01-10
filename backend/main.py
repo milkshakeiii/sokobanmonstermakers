@@ -296,6 +296,210 @@ async def startup():
     print("Monster Workshop server started!")
     print(f"Game time multiplier: {GAME_TIME_MULTIPLIER}x")
 
+    # Start the background tick processor for offline auto-repeat
+    asyncio.create_task(background_tick_processor())
+
+
+# =============================================================================
+# Background Tick Processor (for offline auto-repeat continuation)
+# =============================================================================
+
+async def process_monster_autorepeat(monster: Monster, session: AsyncSession) -> dict:
+    """Process a single autorepeat step for a monster. Returns status dict."""
+    current_task = monster.current_task or {}
+
+    if not current_task.get('is_playing'):
+        return {"skipped": True, "reason": "not playing"}
+
+    recorded_sequence = current_task.get('recorded_sequence', [])
+    if not recorded_sequence:
+        return {"skipped": True, "reason": "no sequence"}
+
+    current_index = current_task.get('current_action_index', 0)
+
+    if current_index >= len(recorded_sequence):
+        # Sequence complete - loop back to start
+        current_index = 0
+
+    action = recorded_sequence[current_index]
+    action_type = action.get('action_type')
+    direction = action.get('direction')
+
+    autorepeat_stopped = False
+    stop_reason = None
+
+    # Execute the action based on type
+    if action_type == 'move' and direction:
+        # Calculate new position
+        new_x, new_y = monster.x, monster.y
+        if direction == "up":
+            new_y -= 1
+        elif direction == "down":
+            new_y += 1
+        elif direction == "left":
+            new_x -= 1
+        elif direction == "right":
+            new_x += 1
+
+        # Update position
+        monster.x = new_x
+        monster.y = new_y
+
+    elif action_type == 'push' and direction:
+        # Calculate target position
+        target_x, target_y = monster.x, monster.y
+        if direction == "up":
+            target_y -= 1
+        elif direction == "down":
+            target_y += 1
+        elif direction == "left":
+            target_x -= 1
+        elif direction == "right":
+            target_x += 1
+
+        # Check if there's an item at target position
+        item_result = await session.execute(
+            select(Entity).where(
+                Entity.zone_id == monster.current_zone_id,
+                Entity.x == target_x,
+                Entity.y == target_y,
+                Entity.entity_type == "item"
+            )
+        )
+        item_at_target = item_result.scalars().first()
+
+        if item_at_target:
+            # Push it and move monster
+            push_x, push_y = target_x, target_y
+            if direction == "up":
+                push_y -= 1
+            elif direction == "down":
+                push_y += 1
+            elif direction == "left":
+                push_x -= 1
+            elif direction == "right":
+                push_x += 1
+
+            # Move item
+            item_at_target.x = push_x
+            item_at_target.y = push_y
+
+            # Move monster to where item was
+            monster.x = target_x
+            monster.y = target_y
+        else:
+            # No item to push - stop autorepeat
+            autorepeat_stopped = True
+            stop_reason = "No ingredient available"
+            current_task['is_playing'] = False
+
+    elif action_type == 'deposit':
+        # Deposit actions - just move the monster
+        if direction:
+            new_x, new_y = monster.x, monster.y
+            if direction == "up":
+                new_y -= 1
+            elif direction == "down":
+                new_y += 1
+            elif direction == "left":
+                new_x -= 1
+            elif direction == "right":
+                new_x += 1
+            monster.x = new_x
+            monster.y = new_y
+
+    elif action_type == 'craft':
+        # Crafting action - check if workshop has required tools
+        workshop_id = action.get('workshop_id')
+        if workshop_id:
+            ws_result = await session.execute(
+                select(Entity).where(Entity.id == workshop_id, Entity.entity_type == "workshop")
+            )
+            workshop = ws_result.scalar_one_or_none()
+            if workshop:
+                workshop_metadata = workshop.entity_metadata or {}
+                recipe_id = workshop_metadata.get('selected_recipe_id')
+
+                if recipe_id:
+                    recipe_result = await session.execute(
+                        select(GoodType).where(GoodType.id == recipe_id)
+                    )
+                    recipe = recipe_result.scalar_one_or_none()
+
+                    if recipe and recipe.tools_required_tags:
+                        tool_items = workshop_metadata.get('tool_items', [])
+                        available_tags = []
+                        for tool in tool_items:
+                            if tool.get('durability', 0) > 0:
+                                available_tags.extend(tool.get('tool_tags', []))
+
+                        missing_tools = []
+                        for required_tag in recipe.tools_required_tags:
+                            if required_tag not in available_tags:
+                                missing_tools.append(required_tag)
+
+                        if missing_tools:
+                            autorepeat_stopped = True
+                            stop_reason = f"Tool depleted: {', '.join(missing_tools)}"
+                            current_task['is_playing'] = False
+
+    # Increment index (unless we stopped)
+    if not autorepeat_stopped:
+        current_task['current_action_index'] = current_index + 1
+
+    monster.current_task = current_task
+    flag_modified(monster, 'current_task')
+
+    return {
+        "processed": True,
+        "stopped": autorepeat_stopped,
+        "stop_reason": stop_reason,
+        "action_index": current_index
+    }
+
+
+async def background_tick_processor():
+    """Background task that processes auto-repeat for all monsters.
+
+    This runs every second (tick rate from spec) and processes all monsters
+    that have active auto-repeat sequences, even when their owners are logged out.
+    """
+    global tick_engine_running, current_tick
+
+    print("Background tick processor started")
+
+    while True:
+        try:
+            await asyncio.sleep(1)  # 1 second tick rate
+
+            if not tick_engine_running:
+                continue  # Tick engine paused
+
+            current_tick += 1
+
+            # Find all monsters with active auto-repeat
+            async with async_session() as session:
+                # Query monsters where current_task contains is_playing = true
+                result = await session.execute(select(Monster))
+                all_monsters = result.scalars().all()
+
+                processed_count = 0
+                for monster in all_monsters:
+                    current_task = monster.current_task or {}
+                    if current_task.get('is_playing'):
+                        status = await process_monster_autorepeat(monster, session)
+                        if status.get('processed'):
+                            processed_count += 1
+
+                if processed_count > 0:
+                    await session.commit()
+                    # Uncomment for debug logging:
+                    # print(f"Tick {current_tick}: Processed {processed_count} monster auto-repeats")
+
+        except Exception as e:
+            print(f"Background tick processor error: {e}")
+            await asyncio.sleep(5)  # Wait a bit before retrying on error
+
 
 @app.get("/", tags=["Root"])
 async def root():
@@ -3567,6 +3771,43 @@ async def step_tick():
     current_tick += 1
     # TODO: Process tick logic
     return {"message": "Stepped one tick", "tick_number": current_tick}
+
+
+@app.get("/api/debug/tick/status", tags=["Debug"])
+async def tick_status():
+    """Get current tick processor status."""
+    return {
+        "running": tick_engine_running,
+        "current_tick": current_tick,
+        "message": "Background tick processor is running" if tick_engine_running else "Tick engine paused"
+    }
+
+
+@app.get("/api/debug/monsters/autorepeat-status", tags=["Debug"])
+async def debug_all_autorepeat_status():
+    """Get auto-repeat status for all monsters (debug only)."""
+    async with async_session() as session:
+        result = await session.execute(select(Monster))
+        all_monsters = result.scalars().all()
+
+        statuses = []
+        for monster in all_monsters:
+            current_task = monster.current_task or {}
+            recorded_sequence = current_task.get('recorded_sequence', [])
+            statuses.append({
+                "monster_id": monster.id,
+                "monster_name": monster.name,
+                "is_playing": current_task.get('is_playing', False),
+                "current_action_index": current_task.get('current_action_index', 0),
+                "total_actions": len(recorded_sequence),
+                "position": {"x": monster.x, "y": monster.y}
+            })
+
+        return {
+            "monsters": statuses,
+            "count": len(statuses),
+            "playing_count": sum(1 for s in statuses if s['is_playing'])
+        }
 
 
 # Game time tracking
