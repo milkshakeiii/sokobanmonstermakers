@@ -885,6 +885,42 @@
             font-style: italic;
         }
 
+        /* Object Info Panel */
+        .object-info {
+            margin-bottom: 10px;
+        }
+
+        .object-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .object-info-row:last-child {
+            border-bottom: none;
+        }
+
+        .object-label {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .object-value {
+            color: var(--text-color);
+            font-weight: 500;
+        }
+
+        #object-info-panel {
+            border-top: 2px solid var(--accent-color);
+            margin-top: 10px;
+            padding-top: 10px;
+        }
+
+        #object-info-panel h4 {
+            color: var(--accent-color);
+        }
+
         .equipment-row {
             display: flex;
             justify-content: space-between;
@@ -1049,6 +1085,7 @@
             justify-content: center;
             font-family: 'Courier New', monospace;
             overflow: hidden;
+            position: relative;
         }
 
         .viewport-placeholder {
@@ -1141,6 +1178,85 @@
             100% {
                 opacity: 0;
                 transform: scale(2);
+            }
+        }
+
+        /* Speech bubble for in-world messages */
+        .speech-bubble-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .speech-bubble {
+            position: absolute;
+            background: var(--panel-bg);
+            border: 2px solid var(--primary-color);
+            border-radius: 12px;
+            padding: 8px 12px;
+            max-width: 200px;
+            font-size: 12px;
+            color: var(--text-color);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+            z-index: 100;
+            animation: speech-bubble-appear 0.3s ease-out;
+            text-align: center;
+        }
+
+        .speech-bubble::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 10px 8px 0 8px;
+            border-style: solid;
+            border-color: var(--primary-color) transparent transparent transparent;
+        }
+
+        .speech-bubble.success {
+            border-color: var(--success-color);
+        }
+
+        .speech-bubble.success::after {
+            border-color: var(--success-color) transparent transparent transparent;
+        }
+
+        .speech-bubble.error {
+            border-color: var(--error-color);
+        }
+
+        .speech-bubble.error::after {
+            border-color: var(--error-color) transparent transparent transparent;
+        }
+
+        .speech-bubble.hiding {
+            animation: speech-bubble-disappear 0.3s ease-in forwards;
+        }
+
+        @keyframes speech-bubble-appear {
+            0% {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes speech-bubble-disappear {
+            0% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+            100% {
+                opacity: 0;
+                transform: translateY(-10px);
             }
         }
 
@@ -1448,6 +1564,34 @@
                         <span class="no-skills">No skills learned yet</span>
                     </div>
                 </div>
+
+                <!-- Object Info Panel (shown when object is selected) -->
+                <div class="panel-section" id="object-info-panel" style="display: none;">
+                    <h4>Selected Object</h4>
+                    <div class="object-info">
+                        <div class="object-info-row">
+                            <span class="object-label">Name:</span>
+                            <span class="object-value" id="object-name">-</span>
+                        </div>
+                        <div class="object-info-row">
+                            <span class="object-label">Type:</span>
+                            <span class="object-value" id="object-type">-</span>
+                        </div>
+                        <div class="object-info-row" id="object-quality-row">
+                            <span class="object-label">Quality:</span>
+                            <span class="object-value" id="object-quality">-</span>
+                        </div>
+                        <div class="object-info-row" id="object-durability-row">
+                            <span class="object-label">Durability:</span>
+                            <span class="object-value" id="object-durability">-</span>
+                        </div>
+                        <div class="object-info-row" id="object-contents-row" style="display: none;">
+                            <span class="object-label">Contents:</span>
+                            <span class="object-value" id="object-contents">-</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary btn-small" id="deselect-object-btn">Deselect</button>
+                </div>
             </div>
 
             <!-- Game Viewport -->
@@ -1499,6 +1643,7 @@
         let selectedSkills = [];   // Currently selected skills for new monster (max 3)
         let zoneEntities = [];     // Entities in the current zone
         let zoneMonsters = [];     // Other monsters in the current zone (multiplayer)
+        let selectedObject = null; // Currently selected entity for info panel
         let zoneTerrainData = {};  // Terrain data for the current zone
         let isRecording = false;   // Is recording mode active
         let recordingState = null; // Current recording state from server
@@ -1554,6 +1699,98 @@
                     toast.parentNode.removeChild(toast);
                 }
             }, TOAST_ANIMATION_DURATION);
+        }
+
+        // Speech bubble system for in-world messages
+        const SPEECH_BUBBLE_DURATION = 3000; // 3 seconds
+        let currentSpeechBubble = null;
+
+        function showSpeechBubble(message, type = 'info') {
+            // Remove existing speech bubble if any
+            if (currentSpeechBubble) {
+                dismissSpeechBubble(currentSpeechBubble, true);
+            }
+
+            const viewportArea = document.getElementById('viewport-area');
+            if (!viewportArea || !activeMonster) return;
+
+            // Get or create speech bubble container
+            let container = viewportArea.querySelector('.speech-bubble-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.className = 'speech-bubble-container';
+                viewportArea.appendChild(container);
+            }
+
+            // Create speech bubble
+            const bubble = document.createElement('div');
+            bubble.className = `speech-bubble ${type}`;
+            bubble.textContent = message;
+
+            // Position the bubble above the monster
+            // Get the actual ASCII viewport position within the container
+            const asciiViewport = viewportArea.querySelector('.ascii-viewport');
+            if (asciiViewport) {
+                const areaRect = viewportArea.getBoundingClientRect();
+                const asciiRect = asciiViewport.getBoundingClientRect();
+
+                // Calculate offset of ASCII viewport within container
+                const offsetX = asciiRect.left - areaRect.left;
+                const offsetY = asciiRect.top - areaRect.top;
+
+                const charWidth = asciiRect.width / VIEWPORT_WIDTH;
+                const charHeight = asciiRect.height / VIEWPORT_HEIGHT;
+
+                // Monster is at center of viewport
+                const monsterScreenX = offsetX + Math.floor(VIEWPORT_WIDTH / 2) * charWidth;
+                const monsterScreenY = offsetY + Math.floor(VIEWPORT_HEIGHT / 2) * charHeight;
+
+                // Position bubble above and centered on monster
+                bubble.style.left = `${monsterScreenX}px`;
+                bubble.style.top = `${Math.max(10, monsterScreenY - 60)}px`;
+                bubble.style.transform = 'translateX(-50%)';
+            } else {
+                // Fallback: center in container
+                bubble.style.left = '50%';
+                bubble.style.top = '40%';
+                bubble.style.transform = 'translateX(-50%)';
+            }
+
+            container.appendChild(bubble);
+            currentSpeechBubble = bubble;
+
+            // Auto-dismiss after duration
+            const dismissTimeout = setTimeout(() => {
+                dismissSpeechBubble(bubble);
+            }, SPEECH_BUBBLE_DURATION);
+
+            bubble.dataset.dismissTimeout = dismissTimeout;
+            return bubble;
+        }
+
+        function dismissSpeechBubble(bubble, immediate = false) {
+            if (!bubble) return;
+
+            if (bubble.dataset.dismissTimeout) {
+                clearTimeout(parseInt(bubble.dataset.dismissTimeout));
+            }
+
+            if (immediate) {
+                if (bubble.parentNode) {
+                    bubble.parentNode.removeChild(bubble);
+                }
+            } else {
+                bubble.classList.add('hiding');
+                setTimeout(() => {
+                    if (bubble.parentNode) {
+                        bubble.parentNode.removeChild(bubble);
+                    }
+                }, 300);
+            }
+
+            if (currentSpeechBubble === bubble) {
+                currentSpeechBubble = null;
+            }
         }
 
         // DOM Elements - Auth
@@ -2118,6 +2355,12 @@
         // Play/autorepeat button
         document.getElementById('play-btn').addEventListener('click', toggleAutorepeat);
 
+        // Viewport click handler for object selection
+        document.getElementById('viewport-area').addEventListener('click', handleViewportClick);
+
+        // Deselect object button
+        document.getElementById('deselect-object-btn').addEventListener('click', deselectObject);
+
         // Keyboard movement handling
         document.addEventListener('keydown', async (e) => {
             // Handle recipe popup keys first
@@ -2212,6 +2455,7 @@
                 // Check if an item was deposited into a workshop
                 if (result.deposit) {
                     showDepositFlash(result.deposit.slot_x, result.deposit.slot_y);
+                    showSpeechBubble(`Deposited ${result.deposit.item_name}!`, 'success');
                     showToast(`Deposited ${result.deposit.item_name} into ${result.deposit.workshop_name}!`, 'success');
                 }
 
@@ -2220,6 +2464,7 @@
                     await fetchRecordingStatus();
                 }
             } catch (err) {
+                showSpeechBubble('Blocked!', 'error');
                 showToast('Move failed: ' + err.message, 'error');
             }
         }
@@ -2533,6 +2778,7 @@
 
                 // Handle zone transition
                 if (result.action === 'zone_transition') {
+                    showSpeechBubble('Traveling...', 'success');
                     showToast(result.message, 'success');
                     // Update monster state with new zone
                     activeMonster.current_zone_id = result.new_zone_id;
@@ -2558,9 +2804,11 @@
                 }
                 // Other interactions
                 else {
+                    showSpeechBubble(result.message, result.action ? 'success' : 'info');
                     showToast(result.message, result.action ? 'success' : 'info');
                 }
             } catch (err) {
+                showSpeechBubble('Nothing to interact with', 'error');
                 showToast('Interaction failed: ' + err.message, 'error');
             }
         }
@@ -2811,6 +3059,127 @@
                 const height = e.height || 1;
                 return x >= e.x && x < e.x + width && y >= e.y && y < e.y + height;
             });
+        }
+
+        // Select an object and show its info in the panel
+        function selectObject(entity) {
+            selectedObject = entity;
+            const panel = document.getElementById('object-info-panel');
+
+            if (!entity) {
+                panel.style.display = 'none';
+                return;
+            }
+
+            // Show the panel
+            panel.style.display = 'block';
+
+            // Get object name from metadata or generate from type
+            const metadata = entity.metadata || {};
+            let name = metadata.name || metadata.good_type || entity.entity_type;
+            if (entity.entity_type === 'workshop') {
+                name = metadata.workshop_type || 'Workshop';
+            }
+            document.getElementById('object-name').textContent = name;
+            document.getElementById('object-type').textContent = entity.entity_type;
+
+            // Show quality if applicable
+            const qualityRow = document.getElementById('object-quality-row');
+            if (metadata.quality !== undefined) {
+                qualityRow.style.display = 'flex';
+                const qualityPercent = Math.round(metadata.quality * 100);
+                document.getElementById('object-quality').textContent = `${qualityPercent}%`;
+            } else {
+                qualityRow.style.display = 'none';
+            }
+
+            // Show durability if applicable
+            const durabilityRow = document.getElementById('object-durability-row');
+            if (metadata.durability !== undefined) {
+                durabilityRow.style.display = 'flex';
+                const durabilityPercent = Math.round(metadata.durability * 100);
+                document.getElementById('object-durability').textContent = `${durabilityPercent}%`;
+            } else {
+                durabilityRow.style.display = 'none';
+            }
+
+            // Show contents for workshops/containers
+            const contentsRow = document.getElementById('object-contents-row');
+            if (metadata.input_items && metadata.input_items.length > 0) {
+                contentsRow.style.display = 'flex';
+                const itemNames = metadata.input_items.map(item => item.name || item.good_type).join(', ');
+                document.getElementById('object-contents').textContent = itemNames;
+            } else {
+                contentsRow.style.display = 'none';
+            }
+
+            // Re-render viewport to highlight selected
+            renderViewport();
+        }
+
+        // Deselect the current object
+        function deselectObject() {
+            selectObject(null);
+        }
+
+        // Handle click on viewport to select objects
+        function handleViewportClick(event) {
+            if (!activeMonster) return;
+
+            const viewportArea = document.getElementById('viewport-area');
+            const asciiViewport = viewportArea.querySelector('.ascii-viewport');
+            if (!asciiViewport) return;
+
+            // Get the bounding rect of the viewport
+            const rect = asciiViewport.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+
+            // Calculate character dimensions (approximate based on monospace font)
+            const charWidth = rect.width / VIEWPORT_WIDTH;
+            const charHeight = rect.height / VIEWPORT_HEIGHT;
+
+            // Calculate grid position
+            const gridX = Math.floor(clickX / charWidth);
+            const gridY = Math.floor(clickY / charHeight);
+
+            // Calculate camera position (same as in renderViewport)
+            const monsterX = activeMonster.x;
+            const monsterY = activeMonster.y;
+            let cameraX = monsterX - Math.floor(VIEWPORT_WIDTH / 2);
+            let cameraY = monsterY - Math.floor(VIEWPORT_HEIGHT / 2);
+            const zoneWidth = 100;
+            const zoneHeight = 100;
+            cameraX = Math.max(0, Math.min(cameraX, zoneWidth - VIEWPORT_WIDTH));
+            cameraY = Math.max(0, Math.min(cameraY, zoneHeight - VIEWPORT_HEIGHT));
+
+            // Calculate world position
+            const worldX = cameraX + gridX;
+            const worldY = cameraY + gridY;
+
+            // Find entity at this position
+            const entity = getEntityAt(worldX, worldY);
+            if (entity) {
+                selectObject(entity);
+            } else {
+                // Check for other monster at position
+                const otherMonster = zoneMonsters.find(m => m.x === worldX && m.y === worldY && m.id !== activeMonster.id);
+                if (otherMonster) {
+                    // Show monster info
+                    selectObject({
+                        entity_type: 'monster',
+                        metadata: {
+                            name: otherMonster.name,
+                            monster_type: otherMonster.monster_type,
+                            commune_name: otherMonster.commune_name
+                        },
+                        x: otherMonster.x,
+                        y: otherMonster.y
+                    });
+                } else {
+                    deselectObject();
+                }
+            }
         }
 
         // Render the ASCII viewport
