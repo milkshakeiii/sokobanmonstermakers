@@ -462,9 +462,88 @@
             color: var(--success-color);
             font-weight: bold;
         }
+
+        /* Toast Notification Styles */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 400px;
+        }
+
+        .toast {
+            padding: 16px 20px;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            animation: slideIn 0.3s ease-out;
+            opacity: 1;
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+        }
+
+        .toast.hiding {
+            opacity: 0;
+            transform: translateX(100%);
+        }
+
+        .toast.success {
+            background-color: rgba(100, 255, 100, 0.15);
+            border: 1px solid var(--success-color);
+            color: var(--success-color);
+        }
+
+        .toast.error {
+            background-color: rgba(255, 100, 100, 0.15);
+            border: 1px solid var(--error-color);
+            color: var(--error-color);
+        }
+
+        .toast.info {
+            background-color: rgba(100, 200, 255, 0.15);
+            border: 1px solid var(--highlight-color);
+            color: var(--highlight-color);
+        }
+
+        .toast-close {
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            padding: 0;
+            margin-left: 12px;
+            font-size: 1.2rem;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+
+        .toast-close:hover {
+            opacity: 1;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
     </style>
 </head>
 <body>
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
     <div id="auth-screen" class="container narrow screen active">
         <h1>Monster Workshop</h1>
         <p class="subtitle">A cooperative crafting game</p>
@@ -570,12 +649,62 @@
     <script>
         const API_URL = '';  // Same origin
 
+        // Toast notification settings
+        const TOAST_DURATION = 4000; // 4 seconds auto-dismiss
+        const TOAST_ANIMATION_DURATION = 300; // Must match CSS transition duration
+
         // State
         let authToken = localStorage.getItem('authToken');
         let currentUser = null;
         let monsterTypes = [];
         let selectedMonsterType = null;
         let myMonsters = [];
+
+        // Toast notification system
+        const toastContainer = document.getElementById('toast-container');
+
+        function showToast(message, type = 'info', duration = TOAST_DURATION) {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <span class="toast-message">${message}</span>
+                <button class="toast-close" aria-label="Close">&times;</button>
+            `;
+
+            // Add close button handler
+            const closeBtn = toast.querySelector('.toast-close');
+            closeBtn.addEventListener('click', () => dismissToast(toast));
+
+            // Add to container
+            toastContainer.appendChild(toast);
+
+            // Auto-dismiss after duration
+            const dismissTimeout = setTimeout(() => {
+                dismissToast(toast);
+            }, duration);
+
+            // Store timeout ID on element for potential manual dismissal
+            toast.dataset.dismissTimeout = dismissTimeout;
+
+            return toast;
+        }
+
+        function dismissToast(toast) {
+            // Clear the timeout if manually dismissed
+            if (toast.dataset.dismissTimeout) {
+                clearTimeout(parseInt(toast.dataset.dismissTimeout));
+            }
+
+            // Add hiding class for animation
+            toast.classList.add('hiding');
+
+            // Remove after animation completes
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, TOAST_ANIMATION_DURATION);
+        }
 
         // DOM Elements - Auth
         const authScreen = document.getElementById('auth-screen');
@@ -620,10 +749,12 @@
         gotoLogin.addEventListener('click', () => switchTab('login'));
         gotoRegister.addEventListener('click', () => switchTab('register'));
 
-        // Show message
+        // Show message (inline in forms) + toast notification
         function showMessage(element, message, isError = false) {
             element.textContent = message;
             element.className = 'message ' + (isError ? 'error' : 'success');
+            // Also show as toast
+            showToast(message, isError ? 'error' : 'success');
         }
 
         // Clear message
@@ -797,9 +928,15 @@
         }
 
         // Create monster form submission
+        let isCreatingMonster = false;
         newMonsterForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             clearMessage(monsterMessage);
+
+            // Prevent double-click submissions
+            if (isCreatingMonster) {
+                return;
+            }
 
             if (!selectedMonsterType) {
                 showMessage(monsterMessage, 'Please select a monster type', true);
@@ -810,6 +947,14 @@
             if (!name) {
                 showMessage(monsterMessage, 'Please enter a name for your monster', true);
                 return;
+            }
+
+            // Disable submit button and set flag
+            isCreatingMonster = true;
+            const submitBtn = newMonsterForm.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Creating...';
             }
 
             try {
@@ -834,6 +979,13 @@
 
             } catch (err) {
                 showMessage(monsterMessage, err.message, true);
+            } finally {
+                // Re-enable submit button and clear flag
+                isCreatingMonster = false;
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Create Monster';
+                }
             }
         });
 

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import bcrypt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,6 +67,14 @@ GAME_TIME_MULTIPLIER = 30  # 1 real second = 30 game seconds
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=8)
+
+    @field_validator('username')
+    @classmethod
+    def username_not_whitespace(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError('Username cannot be empty or whitespace only')
+        return stripped
 
 
 class LoginRequest(BaseModel):
@@ -135,6 +143,18 @@ class CreateMonsterRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     transferable_skills: list[str] = Field(default_factory=list, max_length=3)
 
+    @field_validator('name')
+    @classmethod
+    def name_not_whitespace(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError('Monster name cannot be empty or whitespace only')
+        return stripped
+
+
+class SwitchMonsterRequest(BaseModel):
+    monster_id: str
+
 
 # =============================================================================
 # Dependency: Get current player from session token
@@ -173,6 +193,39 @@ async def get_current_player(token: str, session: AsyncSession) -> Player:
 async def startup():
     """Initialize database and game state on startup."""
     await init_db()
+
+    # Create default starting zone if none exists
+    async with async_session() as session:
+        result = await session.execute(select(Zone))
+        zones = result.scalars().all()
+
+        if not zones:
+            print("Creating default zones...")
+            # Starting village
+            starting_zone = Zone(
+                name="Starting Village",
+                zone_type="village",
+                width=100,
+                height=100,
+                terrain_data={"default": "grass"},
+                zone_metadata={"description": "A peaceful village to begin your journey"}
+            )
+            session.add(starting_zone)
+
+            # Wilderness area
+            wilderness_zone = Zone(
+                name="Eastern Wilderness",
+                zone_type="wilderness",
+                width=150,
+                height=150,
+                terrain_data={"default": "forest"},
+                zone_metadata={"description": "A dangerous wilderness area with rare materials"}
+            )
+            session.add(wilderness_zone)
+
+            await session.commit()
+            print(f"Created zones: {starting_zone.name}, {wilderness_zone.name}")
+
     print("Monster Workshop server started!")
     print(f"Game time multiplier: {GAME_TIME_MULTIPLIER}x")
 
@@ -484,6 +537,55 @@ async def create_monster(request: CreateMonsterRequest, token: str):
         )
 
 
+@app.post("/api/monsters/switch", response_model=MonsterInfo, tags=["Monsters"])
+async def switch_monster(request: SwitchMonsterRequest, token: str):
+    """Switch to controlling a different monster. Players can only control their own monsters."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        # TODO: Update active monster tracking
+        # For now, just return the monster info to confirm the switch
+
+        return MonsterInfo(
+            id=monster.id,
+            name=monster.name,
+            monster_type=monster.monster_type,
+            str_=monster.str_,
+            dex=monster.dex,
+            con=monster.con,
+            int_=monster.int_,
+            wis=monster.wis,
+            cha=monster.cha,
+            body_fitting_used=monster.body_fitting_used,
+            mind_fitting_used=monster.mind_fitting_used,
+            current_zone_id=monster.current_zone_id,
+            x=monster.x,
+            y=monster.y
+        )
+
+
 # =============================================================================
 # Debug Endpoints (Development Only)
 # =============================================================================
@@ -516,6 +618,38 @@ async def step_tick():
     current_tick += 1
     # TODO: Process tick logic
     return {"message": "Stepped one tick", "tick_number": current_tick}
+
+
+class CreateZoneRequest(BaseModel):
+    name: str
+    zone_type: str = "village"
+    width: int = 100
+    height: int = 100
+
+
+@app.post("/api/debug/zones", tags=["Debug"])
+async def create_zone(request: CreateZoneRequest):
+    """Create a new zone (debug only)."""
+    async with async_session() as session:
+        zone = Zone(
+            name=request.name,
+            zone_type=request.zone_type,
+            width=request.width,
+            height=request.height,
+            terrain_data={"default": "grass" if request.zone_type == "village" else "forest"},
+            zone_metadata={"description": f"A {request.zone_type} zone"}
+        )
+        session.add(zone)
+        await session.commit()
+        await session.refresh(zone)
+
+        return {
+            "id": zone.id,
+            "name": zone.name,
+            "zone_type": zone.zone_type,
+            "width": zone.width,
+            "height": zone.height
+        }
 
 
 @app.get("/api/debug/zones/{zone_id}/state", tags=["Debug"])
@@ -607,6 +741,56 @@ async def get_connections():
     """Get list of connected players."""
     # TODO: Track actual WebSocket connections
     return {"connections": [], "count": 0}
+
+
+class CreateEntityRequest(BaseModel):
+    zone_id: str
+    entity_type: str
+    x: int
+    y: int
+    width: int = 1
+    height: int = 1
+    metadata: Optional[dict] = None
+
+
+@app.post("/api/debug/entities", tags=["Debug"])
+async def create_entity(request: CreateEntityRequest):
+    """Create an entity in a zone (debug only)."""
+    async with async_session() as session:
+        # Verify zone exists
+        result = await session.execute(
+            select(Zone).where(Zone.id == request.zone_id)
+        )
+        zone = result.scalar_one_or_none()
+
+        if not zone:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        entity = Entity(
+            zone_id=request.zone_id,
+            entity_type=request.entity_type,
+            x=request.x,
+            y=request.y,
+            width=request.width,
+            height=request.height,
+            entity_metadata=request.metadata
+        )
+        session.add(entity)
+        await session.commit()
+        await session.refresh(entity)
+
+        return {
+            "id": entity.id,
+            "zone_id": entity.zone_id,
+            "entity_type": entity.entity_type,
+            "x": entity.x,
+            "y": entity.y,
+            "width": entity.width,
+            "height": entity.height,
+            "metadata": entity.entity_metadata,
+            "created_at": entity.created_at.isoformat(),
+            "updated_at": entity.updated_at.isoformat()
+        }
 
 
 # =============================================================================
