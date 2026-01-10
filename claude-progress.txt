@@ -818,3 +818,54 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 2. Consider adding UI indicator for upcoming upkeep
 3. Implement automatic upkeep collection on monster actions
 4. Test upkeep with insufficient renown scenario
+
+---
+
+## Session 12 (Continued) - Monster Aging Implementation
+
+### Completed Tasks:
+
+1. **Implemented Feature 34: Monster aging stat bonus**
+   - Monsters gain +1 to all stats at 30 game days old
+   - Monsters gain +2 to all stats at 60 game days old
+   - Age bonus calculated via `age_bonus` property in Monster model
+   - Applied in `monster_to_info()` function
+
+2. **Added Debug Endpoint for Age Testing**
+   - `POST /api/debug/monsters/{id}/advance-age` - Advance monster age
+   - Returns before/after stats with age bonus comparison
+
+3. **Verified Aging System**
+   - Tested advancing from 5 → 35 days: +1 bonus applied
+   - Tested advancing from 35 → 65 days: +2 bonus applied
+   - API returns stats with bonus (e.g., STR 14 instead of base 12)
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 82
+- In progress: 0
+- Completion: 48.0%
+
+### Features Verified This Session:
+- Feature 34: Monster aging stat bonus at 30 days
+  - ✓ Create new monster with known initial stats
+  - ✓ Advance game time to 30 days
+  - ✓ All ability scores increased by 1
+  - ✓ Advance to 60 days for +2 bonus
+  - ✓ Aging bonus permanent (based on created_at timestamp)
+
+### Files Modified This Session:
+- backend/main.py:
+  - Updated `monster_to_info()` to apply `age_bonus` to all stats
+  - Added `/api/debug/monsters/{id}/advance-age` endpoint
+
+### Technical Notes:
+- Age calculated from `created_at` timestamp
+- Age bonus tiers: 0 (<30 days), +1 (30-59 days), +2 (60+ days)
+- Bonus applied to all 6 ability scores (STR, DEX, CON, INT, WIS, CHA)
+- Base stats stored unchanged in database; bonus calculated on-the-fly
+
+### Next Steps for Future Agents:
+1. Get next pending feature from feature_get_next
+2. Consider adding age indicator to UI
+3. Continue with remaining economy/crafting features

@@ -847,22 +847,27 @@ def monster_to_info(monster: Monster, apply_skill_decay: bool = True) -> Monster
     Args:
         monster: The Monster ORM object
         apply_skill_decay: If True, calculate current skill levels with decay applied
+
+    Note: Applies age bonus (+1 at 30 days, +2 at 60 days) to all ability scores.
     """
     applied_skills = monster.applied_skills or {}
 
     if apply_skill_decay and applied_skills:
         applied_skills = calculate_skill_decay(monster)
 
+    # Apply age bonus to ability scores
+    age_bonus = monster.age_bonus
+
     return MonsterInfo(
         id=monster.id,
         name=monster.name,
         monster_type=monster.monster_type,
-        str_=monster.str_,
-        dex=monster.dex,
-        con=monster.con,
-        int_=monster.int_,
-        wis=monster.wis,
-        cha=monster.cha,
+        str_=monster.str_ + age_bonus,
+        dex=monster.dex + age_bonus,
+        con=monster.con + age_bonus,
+        int_=monster.int_ + age_bonus,
+        wis=monster.wis + age_bonus,
+        cha=monster.cha + age_bonus,
         body_fitting_used=monster.body_fitting_used,
         mind_fitting_used=monster.mind_fitting_used,
         current_zone_id=monster.current_zone_id,
@@ -3148,6 +3153,78 @@ async def debug_run_migrations():
                 results.append(f"Failed to add column: {str(add_err)}")
 
     return {"results": results}
+
+
+@app.post("/api/debug/monsters/{monster_id}/advance-age", tags=["Debug"])
+async def debug_advance_monster_age(monster_id: str, days: float = 30.0):
+    """Debug endpoint to advance a monster's age for testing.
+
+    Moves the created_at timestamp back by the specified number of game days.
+    This simulates the monster aging without actually waiting.
+
+    Args:
+        monster_id: The ID of the monster
+        days: Number of game days to age the monster (default 30.0)
+    """
+    from datetime import timedelta
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get current stats before aging
+        stats_before = {
+            "str": monster.str_,
+            "dex": monster.dex,
+            "con": monster.con,
+            "int": monster.int_,
+            "wis": monster.wis,
+            "cha": monster.cha
+        }
+        age_before = monster.age_days
+        age_bonus_before = monster.age_bonus
+
+        # Game time: 1 real second = 30 game seconds
+        # So 1 game day = (24 * 60 * 60) / 30 real seconds = 2880 real seconds = 48 minutes
+        real_seconds_per_game_day = (24 * 60 * 60) / GAME_TIME_MULTIPLIER
+        real_seconds_to_subtract = real_seconds_per_game_day * days
+
+        # Move created_at back in time
+        new_created_at = monster.created_at - timedelta(seconds=real_seconds_to_subtract)
+        monster.created_at = new_created_at
+
+        await session.commit()
+
+        # Calculate new age and bonus
+        age_after = monster.age_days
+        age_bonus_after = monster.age_bonus
+
+        # Get stats with age bonus applied
+        stats_after = {
+            "str": monster.str_ + age_bonus_after,
+            "dex": monster.dex + age_bonus_after,
+            "con": monster.con + age_bonus_after,
+            "int": monster.int_ + age_bonus_after,
+            "wis": monster.wis + age_bonus_after,
+            "cha": monster.cha + age_bonus_after
+        }
+
+        return {
+            "message": f"Advanced monster age by {days} game days",
+            "monster_id": monster.id,
+            "monster_name": monster.name,
+            "age_before": age_before,
+            "age_after": age_after,
+            "age_bonus_before": age_bonus_before,
+            "age_bonus_after": age_bonus_after,
+            "base_stats": stats_before,
+            "stats_with_bonus": stats_after
+        }
 
 
 @app.post("/api/debug/monsters/{monster_id}/collect-upkeep", tags=["Debug"])
