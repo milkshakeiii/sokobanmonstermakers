@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 import os
 from pydantic import BaseModel, Field, field_validator
 import bcrypt
-from sqlalchemy import select, text
+from sqlalchemy import select, text, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -1768,6 +1768,122 @@ async def interact(request: InteractRequest, token: str):
                 entity_name=metadata.get('name', 'Dispenser')
             )
 
+        elif interactable.entity_type == 'gathering_spot':
+            metadata = interactable.entity_metadata or {}
+            spot_name = metadata.get('name', 'Gathering Spot')
+            good_type_name = metadata.get('produces', 'resource')
+            cooldown_seconds = metadata.get('cooldown', 60)  # Default 60 second cooldown
+            last_gathered = metadata.get('last_gathered_at')
+
+            # Check cooldown
+            import time
+            current_time = time.time()
+            if last_gathered and (current_time - last_gathered) < cooldown_seconds:
+                remaining = int(cooldown_seconds - (current_time - last_gathered))
+                return InteractResponse(
+                    message=f"{spot_name} needs {remaining}s to regenerate",
+                    action=None,
+                    entity_type='gathering_spot',
+                    entity_name=spot_name
+                )
+
+            # Look up the good type to produce
+            result = await session.execute(
+                select(GoodType).where(GoodType.name == good_type_name)
+            )
+            good_type = result.scalar_one_or_none()
+
+            if not good_type:
+                return InteractResponse(
+                    message=f"{spot_name} has nothing to gather",
+                    action=None,
+                    entity_type='gathering_spot',
+                    entity_name=spot_name
+                )
+
+            # Find an empty adjacent position to place the item
+            adjacent_positions = [
+                (monster.x - 1, monster.y),
+                (monster.x + 1, monster.y),
+                (monster.x, monster.y - 1),
+                (monster.x, monster.y + 1),
+            ]
+
+            # Get all entities to check for blocking
+            entities_result = await session.execute(
+                select(Entity).where(Entity.zone_id == monster.current_zone_id)
+            )
+            zone_entities = entities_result.scalars().all()
+
+            # Get all monsters in zone
+            monsters_result = await session.execute(
+                select(Monster).where(Monster.current_zone_id == monster.current_zone_id)
+            )
+            zone_monsters = monsters_result.scalars().all()
+
+            # Find first empty adjacent position (not blocked by entity or monster)
+            spawn_pos = None
+            for pos in adjacent_positions:
+                blocked = False
+                # Check if position is blocked by any entity
+                for e in zone_entities:
+                    e_width = e.width or 1
+                    e_height = e.height or 1
+                    if (e.x <= pos[0] < e.x + e_width and
+                        e.y <= pos[1] < e.y + e_height):
+                        blocked = True
+                        break
+                # Check if position is blocked by monster
+                if not blocked:
+                    for m in zone_monsters:
+                        if m.x == pos[0] and m.y == pos[1]:
+                            blocked = True
+                            break
+                if not blocked:
+                    spawn_pos = pos
+                    break
+
+            if not spawn_pos:
+                return InteractResponse(
+                    message="No space to place gathered item",
+                    action=None,
+                    entity_type='gathering_spot',
+                    entity_name=spot_name
+                )
+
+            # Create the gathered item
+            import uuid
+            new_item = Entity(
+                id=str(uuid.uuid4()),
+                zone_id=monster.current_zone_id,
+                entity_type='item',
+                x=spawn_pos[0],
+                y=spawn_pos[1],
+                width=1,
+                height=1,
+                entity_metadata={
+                    'name': good_type_name,
+                    'good_type': good_type_name,
+                    'quality': 50,  # Base quality, could be modified by skills
+                    'type_tags': good_type.type_tags or []
+                }
+            )
+            session.add(new_item)
+
+            # Update gathering spot cooldown
+            metadata['last_gathered_at'] = current_time
+            interactable.entity_metadata = metadata
+            flag_modified(interactable, 'entity_metadata')
+
+            await session.commit()
+
+            return InteractResponse(
+                message=f"Gathered {good_type_name} from {spot_name}",
+                action='gathered',
+                entity_type='gathering_spot',
+                entity_name=spot_name
+            )
+
         else:
             metadata = interactable.entity_metadata or {}
             return InteractResponse(
@@ -1890,12 +2006,32 @@ async def select_recipe(workshop_id: str, request: SelectRecipeRequest, token: s
         can_craft = len(missing_inputs) == 0 and len(missing_tools) == 0
 
         if can_craft:
+            # Get monster's stats for crafting speed bonus
+            result = await session.execute(
+                select(Monster).where(Monster.id == request.monster_id)
+            )
+            crafter = result.scalar_one_or_none()
+
+            # Calculate crafting duration with DEX/INT bonuses
+            base_duration = recipe.production_time
+            if crafter:
+                # DEX bonus: Each point above 10 reduces time by 2%
+                dex_bonus = max(0, crafter.dex - 10) * 0.02
+                # INT bonus: Each point above 10 reduces time by 1%
+                int_bonus = max(0, crafter.int_ - 10) * 0.01
+                # Total reduction (capped at 50%)
+                total_reduction = min(0.5, dex_bonus + int_bonus)
+                crafting_duration = int(base_duration * (1 - total_reduction))
+            else:
+                crafting_duration = base_duration
+
             workshop_metadata['is_crafting'] = True
             workshop_metadata['crafting_started_at'] = datetime.utcnow().isoformat()
-            workshop_metadata['crafting_duration'] = recipe.production_time
+            workshop_metadata['crafting_duration'] = crafting_duration
+            workshop_metadata['base_duration'] = base_duration  # Store original for comparison
             workshop_metadata['crafter_monster_id'] = request.monster_id  # Track who's crafting
             workshop_metadata['primary_applied_skill'] = recipe.primary_applied_skill  # Skill to learn
-            message = f"Started crafting {recipe.name}!"
+            message = f"Started crafting {recipe.name}! (Duration: {crafting_duration}s)"
         else:
             workshop_metadata['is_crafting'] = False
             workshop_metadata.pop('crafting_started_at', None)
@@ -2975,6 +3111,93 @@ async def update_recipe(recipe_id: int, primary_applied_skill: str = None):
 
         await session.commit()
         return {"id": recipe.id, "name": recipe.name, "primary_applied_skill": recipe.primary_applied_skill}
+
+
+@app.post("/api/debug/tech-tree/load", tags=["Debug"])
+async def load_tech_tree():
+    """Load tech tree from JSON file (data/tech_tree/good_types.json)."""
+    import json
+    import os
+
+    # Get the path to the JSON file
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    json_path = os.path.join(base_dir, "data", "tech_tree", "good_types.json")
+
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail=f"Tech tree file not found at {json_path}")
+
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    good_types_data = data.get('good_types', [])
+    if not good_types_data:
+        raise HTTPException(status_code=400, detail="No good_types found in JSON file")
+
+    async with async_session() as session:
+        # Clear existing good types
+        await session.execute(delete(GoodType))
+
+        # Insert new good types
+        created_count = 0
+        for gt_data in good_types_data:
+            good_type = GoodType(
+                name=gt_data.get('name'),
+                type_tags=gt_data.get('type_tags', []),
+                storage_volume=gt_data.get('storage_volume', 1),
+                has_quality=gt_data.get('has_quality', 1),
+                is_fixed_quantity=gt_data.get('is_fixed_quantity', 0),
+                requires_workshop=gt_data.get('requires_workshop'),
+                relevant_ability_score=gt_data.get('relevant_ability_score'),
+                transferable_skills=gt_data.get('transferable_skills', []),
+                primary_applied_skill=gt_data.get('primary_applied_skill'),
+                secondary_applied_skills=gt_data.get('secondary_applied_skills', []),
+                difficulty_rating=gt_data.get('difficulty_rating', 1),
+                production_time=gt_data.get('production_time', 60),
+                value_added_shares=gt_data.get('value_added_shares', 1),
+                quantity=gt_data.get('quantity', 1),
+                input_goods_tags_required=gt_data.get('input_goods_tags_required', []),
+                tools_required_tags=gt_data.get('tools_required_tags', []),
+                tools_weights=gt_data.get('tools_weights', {}),
+                raw_material_base_value=gt_data.get('raw_material_base_value'),
+                raw_material_rarity=gt_data.get('raw_material_rarity'),
+                raw_material_density=gt_data.get('raw_material_density')
+            )
+            session.add(good_type)
+            created_count += 1
+
+        await session.commit()
+
+    return {
+        "message": f"Loaded {created_count} good types from tech tree",
+        "count": created_count
+    }
+
+
+@app.get("/api/good-types", tags=["Recipes"])
+async def get_all_good_types():
+    """Get all good types in the tech tree."""
+    async with async_session() as session:
+        result = await session.execute(select(GoodType).order_by(GoodType.id))
+        good_types = result.scalars().all()
+
+        return [
+            {
+                "id": gt.id,
+                "name": gt.name,
+                "type_tags": gt.type_tags or [],
+                "storage_volume": gt.storage_volume,
+                "has_quality": gt.has_quality,
+                "requires_workshop": gt.requires_workshop,
+                "relevant_ability_score": gt.relevant_ability_score,
+                "transferable_skills": gt.transferable_skills or [],
+                "primary_applied_skill": gt.primary_applied_skill,
+                "difficulty_rating": gt.difficulty_rating,
+                "production_time": gt.production_time,
+                "input_goods_tags_required": gt.input_goods_tags_required or [],
+                "tools_required_tags": gt.tools_required_tags or []
+            }
+            for gt in good_types
+        ]
 
 
 # Tick engine state
