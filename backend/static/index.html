@@ -1082,6 +1082,12 @@
             font-weight: bold;
         }
 
+        .ascii-viewport .other-monster {
+            color: #ff7700;  /* Orange for other players' monsters */
+            font-weight: bold;
+            text-shadow: 0 0 3px #ff7700;
+        }
+
         .ascii-viewport .item {
             color: var(--warning-color);
         }
@@ -1492,6 +1498,7 @@
         let availableSkills = [];  // List of all transferable skills
         let selectedSkills = [];   // Currently selected skills for new monster (max 3)
         let zoneEntities = [];     // Entities in the current zone
+        let zoneMonsters = [];     // Other monsters in the current zone (multiplayer)
         let zoneTerrainData = {};  // Terrain data for the current zone
         let isRecording = false;   // Is recording mode active
         let recordingState = null; // Current recording state from server
@@ -1771,10 +1778,12 @@
             return 'low';
         }
 
-        // Load monster types
+        // Load monster types (with token for cost multiplier)
         async function loadMonsterTypes() {
             try {
-                monsterTypes = await apiCall('/api/monsters/types');
+                // Pass token to get adjusted costs based on spending history
+                const tokenParam = authToken ? `?token=${authToken}` : '';
+                monsterTypes = await apiCall('/api/monsters/types' + tokenParam);
                 renderMonsterTypes();
             } catch (err) {
                 showMessage(monsterMessage, 'Failed to load monster types: ' + err.message, true);
@@ -2747,6 +2756,7 @@
         async function loadZoneData() {
             if (!activeMonster || !activeMonster.current_zone_id) {
                 zoneEntities = [];
+                zoneMonsters = [];
                 zoneTerrainData = {};
                 return;
             }
@@ -2758,9 +2768,13 @@
 
                 // Load entities in zone
                 zoneEntities = await apiCall(`/api/zones/${activeMonster.current_zone_id}/entities`);
+
+                // Load all monsters in zone (multiplayer visibility)
+                zoneMonsters = await apiCall(`/api/zones/${activeMonster.current_zone_id}/monsters`);
             } catch (err) {
                 console.error('Failed to load zone data:', err);
                 zoneEntities = [];
+                zoneMonsters = [];
                 zoneTerrainData = {};
             }
         }
@@ -2881,7 +2895,16 @@
                         }
                     }
 
-                    // Check for monster (player's monster takes priority)
+                    // Check for other monsters (multiplayer visibility)
+                    const otherMonster = zoneMonsters.find(m =>
+                        m.x === worldX && m.y === worldY && m.id !== activeMonster.id
+                    );
+                    if (otherMonster) {
+                        char = 'M';  // Other player's monster
+                        colorClass = 'other-monster';
+                    }
+
+                    // Check for player's own monster (takes priority)
                     if (worldX === monsterX && worldY === monsterY) {
                         char = '@';
                         colorClass = 'monster';

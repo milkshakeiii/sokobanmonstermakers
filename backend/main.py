@@ -498,18 +498,36 @@ async def update_zone_terrain(zone_id: str, request: UpdateZoneTerrainRequest):
 # =============================================================================
 
 @app.get("/api/monsters/types", response_model=list[MonsterTypeInfo], tags=["Monsters"])
-async def get_monster_types():
-    """Get all available monster types with their stats and costs."""
-    return [
-        MonsterTypeInfo(
+async def get_monster_types(token: str = None):
+    """Get all available monster types with their stats and costs.
+
+    If a token is provided, costs are adjusted based on the player's spending history.
+    """
+    # If token provided, get commune for cost multiplier
+    commune = None
+    if token:
+        async with async_session() as session:
+            try:
+                player = await get_current_player(token, session)
+                result = await session.execute(
+                    select(Commune).where(Commune.player_id == player.id)
+                )
+                commune = result.scalar_one_or_none()
+            except HTTPException:
+                pass  # Invalid token, use base costs
+
+    result = []
+    for name, data in MONSTER_TYPES.items():
+        base_cost = data["cost"]
+        adjusted_cost = get_adjusted_cost(base_cost, commune) if commune else base_cost
+        result.append(MonsterTypeInfo(
             name=name,
-            cost=data["cost"],
+            cost=adjusted_cost,
             body_cap=data["body_cap"],
             mind_cap=data["mind_cap"],
             base_stats=data["base_stats"]
-        )
-        for name, data in MONSTER_TYPES.items()
-    ]
+        ))
+    return result
 
 
 @app.get("/api/monsters/skills", tags=["Monsters"])
@@ -587,18 +605,21 @@ async def create_monster(request: CreateMonsterRequest, token: str):
         if not commune:
             raise HTTPException(status_code=400, detail="Player has no commune")
 
-        # Check if player has enough renown
-        monster_cost = MONSTER_TYPES[request.monster_type]["cost"]
+        # Check if player has enough renown (applying cost multiplier)
+        base_cost = MONSTER_TYPES[request.monster_type]["cost"]
+        adjusted_cost = get_adjusted_cost(base_cost, commune)
         current_renown = int(commune.renown)
 
-        if current_renown < monster_cost:
+        if current_renown < adjusted_cost:
             raise HTTPException(
                 status_code=400,
-                detail=f"Not enough renown. Need {monster_cost}, have {current_renown}"
+                detail=f"Not enough renown. Need {adjusted_cost}, have {current_renown}"
             )
 
-        # Deduct cost
-        commune.renown = str(current_renown - monster_cost)
+        # Deduct cost and track spending
+        commune.renown = str(current_renown - adjusted_cost)
+        current_spent = int(commune.total_renown_spent or "0")
+        commune.total_renown_spent = str(current_spent + adjusted_cost)
 
         # Get starting zone (first village zone)
         result = await session.execute(
@@ -753,6 +774,26 @@ async def is_position_blocked_by_entity(session, zone_id: str, x: int, y: int,
             return True
 
     return False
+
+
+def calculate_cost_multiplier(total_renown_spent: int) -> float:
+    """Calculate cost multiplier based on total renown spent by a commune.
+
+    Cost multiplier formula:
+    - Base multiplier: 1.0
+    - Every 1000 renown spent adds 0.1 to the multiplier (10% increase)
+    - Example: 0 spent = 1.0x, 1000 spent = 1.1x, 5000 spent = 1.5x, 10000 spent = 2.0x
+    - Cap at 3.0x (at 20000 spent)
+    """
+    multiplier = 1.0 + (total_renown_spent / 1000) * 0.1
+    return min(3.0, multiplier)
+
+
+def get_adjusted_cost(base_cost: int, commune: Commune) -> int:
+    """Get adjusted cost after applying cost multiplier."""
+    total_spent = int(commune.total_renown_spent or "0")
+    multiplier = calculate_cost_multiplier(total_spent)
+    return int(base_cost * multiplier)
 
 
 def get_item_weight(entity: Entity) -> int:
@@ -2755,6 +2796,37 @@ async def get_zone_entities(zone_id: str):
         ]
 
 
+@app.get("/api/zones/{zone_id}/monsters", tags=["Zones"])
+async def get_zone_monsters(zone_id: str):
+    """Get all monsters in a zone (for multiplayer visibility)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.current_zone_id == zone_id)
+        )
+        monsters = result.scalars().all()
+
+        # Also get commune info for each monster to show owner
+        monster_list = []
+        for m in monsters:
+            # Get commune for this monster
+            result = await session.execute(
+                select(Commune).where(Commune.id == m.commune_id)
+            )
+            commune = result.scalar_one_or_none()
+
+            monster_list.append({
+                "id": m.id,
+                "name": m.name,
+                "monster_type": m.monster_type,
+                "x": m.x,
+                "y": m.y,
+                "commune_id": m.commune_id,
+                "commune_name": commune.name if commune else "Unknown"
+            })
+
+        return monster_list
+
+
 # =============================================================================
 # Recipes Endpoints
 # =============================================================================
@@ -3151,6 +3223,62 @@ async def create_entity(request: CreateEntityRequest):
             "metadata": entity.entity_metadata,
             "created_at": entity.created_at.isoformat(),
             "updated_at": entity.updated_at.isoformat()
+        }
+
+
+@app.get("/api/debug/communes/{commune_id}/cost-info", tags=["Debug"])
+async def debug_get_commune_cost_info(commune_id: str):
+    """Debug endpoint to view a commune's cost multiplier info."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Commune).where(Commune.id == commune_id)
+        )
+        commune = result.scalar_one_or_none()
+
+        if not commune:
+            raise HTTPException(status_code=404, detail="Commune not found")
+
+        total_spent = int(commune.total_renown_spent or "0")
+        multiplier = calculate_cost_multiplier(total_spent)
+
+        # Show adjusted costs for all monster types
+        adjusted_costs = {
+            name: get_adjusted_cost(data["cost"], commune)
+            for name, data in MONSTER_TYPES.items()
+        }
+
+        return {
+            "commune_id": commune.id,
+            "commune_name": commune.name,
+            "renown": int(commune.renown),
+            "total_renown_spent": total_spent,
+            "cost_multiplier": round(multiplier, 2),
+            "adjusted_monster_costs": adjusted_costs
+        }
+
+
+@app.post("/api/debug/communes/{commune_id}/set-spending", tags=["Debug"])
+async def debug_set_commune_spending(commune_id: str, total_spent: int):
+    """Debug endpoint to set a commune's total spending (for testing cost multiplier)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Commune).where(Commune.id == commune_id)
+        )
+        commune = result.scalar_one_or_none()
+
+        if not commune:
+            raise HTTPException(status_code=404, detail="Commune not found")
+
+        old_spent = int(commune.total_renown_spent or "0")
+        commune.total_renown_spent = str(total_spent)
+        await session.commit()
+
+        new_multiplier = calculate_cost_multiplier(total_spent)
+
+        return {
+            "message": f"Updated total_renown_spent from {old_spent} to {total_spent}",
+            "commune_id": commune.id,
+            "new_cost_multiplier": round(new_multiplier, 2)
         }
 
 
