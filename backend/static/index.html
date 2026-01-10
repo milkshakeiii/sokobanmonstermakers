@@ -1169,23 +1169,39 @@
         }
 
         /* Exceptional quality emissive glow effect (quality >= 90%) */
+        /* Bloom post-processing: multiple layered drop-shadows for soft glow */
         .ascii-viewport .exceptional-quality {
             animation: exceptional-glow 2s ease-in-out infinite;
-            filter: drop-shadow(0 0 6px gold);
+            filter:
+                drop-shadow(0 0 3px gold)
+                drop-shadow(0 0 6px gold)
+                drop-shadow(0 0 12px rgba(255, 215, 0, 0.6));
         }
 
         @keyframes exceptional-glow {
             0%, 100% {
-                filter: drop-shadow(0 0 4px gold) drop-shadow(0 0 8px rgba(255, 215, 0, 0.5));
+                filter:
+                    drop-shadow(0 0 3px gold)
+                    drop-shadow(0 0 6px gold)
+                    drop-shadow(0 0 10px rgba(255, 215, 0, 0.5))
+                    drop-shadow(0 0 20px rgba(255, 215, 0, 0.3));
             }
             50% {
-                filter: drop-shadow(0 0 8px gold) drop-shadow(0 0 16px rgba(255, 215, 0, 0.7));
+                filter:
+                    drop-shadow(0 0 4px gold)
+                    drop-shadow(0 0 8px gold)
+                    drop-shadow(0 0 16px rgba(255, 215, 0, 0.7))
+                    drop-shadow(0 0 30px rgba(255, 215, 0, 0.4));
             }
         }
 
         /* High quality glow effect (quality >= 75% but < 90%) */
+        /* Bloom post-processing: subtle silver glow */
         .ascii-viewport .high-quality {
-            filter: drop-shadow(0 0 3px silver);
+            filter:
+                drop-shadow(0 0 2px silver)
+                drop-shadow(0 0 5px silver)
+                drop-shadow(0 0 10px rgba(192, 192, 192, 0.4));
         }
 
         /* Durability red tint - increases as durability decreases */
@@ -1214,12 +1230,22 @@
 
         .ascii-viewport .signpost {
             color: #ff69b4;  /* Hot pink for visibility */
-            text-shadow: 0 0 5px #ff69b4;
+            /* Bloom post-processing: multiple layered glows */
+            text-shadow:
+                0 0 2px #ff69b4,
+                0 0 5px #ff69b4,
+                0 0 10px #ff69b4,
+                0 0 20px rgba(255, 105, 180, 0.5);
         }
 
         .ascii-viewport .delivery {
             color: #ffd700;  /* Gold for delivery/scoring locations */
-            text-shadow: 0 0 5px #ffd700;
+            /* Bloom post-processing: multiple layered glows */
+            text-shadow:
+                0 0 2px #ffd700,
+                0 0 5px #ffd700,
+                0 0 10px #ffd700,
+                0 0 20px rgba(255, 215, 0, 0.5);
         }
 
         .ascii-viewport .workshop {
@@ -1229,6 +1255,12 @@
 
         .ascii-viewport .workshop-floor {
             color: #654321;  /* Darker brown for workshop interior */
+        }
+
+        /* Wagon - multi-cell entity (2x2 by default) */
+        .ascii-viewport .wagon {
+            color: #daa520;  /* Goldenrod for wagon */
+            text-shadow: 0 0 3px #b8860b;
         }
 
         /* Deposit flash effect */
@@ -3822,6 +3854,29 @@
                         } else if (entity.entity_type === 'delivery') {
                             char = '$';
                             colorClass = 'delivery';
+                        } else if (entity.entity_type === 'wagon') {
+                            // Wagon rendering - multi-cell entity (2x2 by default)
+                            const width = entity.width || 2;
+                            const height = entity.height || 2;
+                            const localX = worldX - entity.x;
+                            const localY = worldY - entity.y;
+
+                            // Use wagon box-drawing characters for visual representation
+                            // Top-left: ╔, Top-right: ╗, Bottom-left: ╚, Bottom-right: ╝
+                            // Top edge: ═, Bottom edge: ═, Left edge: ║, Right edge: ║
+                            if (localY === 0) {
+                                if (localX === 0) char = '╔';
+                                else if (localX === width - 1) char = '╗';
+                                else char = '═';
+                            } else if (localY === height - 1) {
+                                if (localX === 0) char = '╚';
+                                else if (localX === width - 1) char = '╝';
+                                else char = '═';
+                            } else {
+                                if (localX === 0 || localX === width - 1) char = '║';
+                                else char = ' ';  // Interior
+                            }
+                            colorClass = 'wagon';
                         }
                     }
 
