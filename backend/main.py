@@ -1163,6 +1163,8 @@ async def get_zone_entities(zone_id: str):
                 "entity_type": e.entity_type,
                 "x": e.x,
                 "y": e.y,
+                "width": e.width,
+                "height": e.height,
                 "metadata": e.entity_metadata
             }
             for e in entities

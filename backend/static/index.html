@@ -814,6 +814,15 @@
             text-shadow: 0 0 5px #ff69b4;
         }
 
+        .ascii-viewport .workshop {
+            color: #8b4513;  /* Saddle brown for workshop walls */
+            text-shadow: 0 0 3px #8b4513;
+        }
+
+        .ascii-viewport .workshop-floor {
+            color: #654321;  /* Darker brown for workshop interior */
+        }
+
         /* Responsive game screen */
         @media (max-width: 768px) {
             .game-container {
@@ -1766,9 +1775,13 @@
             return false;
         }
 
-        // Get entity at position
+        // Get entity at position (handles multi-cell entities)
         function getEntityAt(x, y) {
-            return zoneEntities.find(e => e.x === x && e.y === y);
+            return zoneEntities.find(e => {
+                const width = e.width || 1;
+                const height = e.height || 1;
+                return x >= e.x && x < e.x + width && y >= e.y && y < e.y + height;
+            });
         }
 
         // Render the ASCII viewport
@@ -1824,8 +1837,20 @@
                             char = '*';
                             colorClass = 'item';
                         } else if (entity.entity_type === 'workshop') {
-                            char = 'W';
-                            colorClass = 'item';
+                            // Workshop rendering - edges vs interior
+                            const width = entity.width || 4;
+                            const height = entity.height || 4;
+                            const localX = worldX - entity.x;
+                            const localY = worldY - entity.y;
+                            const isEdge = localX === 0 || localX === width - 1 ||
+                                           localY === 0 || localY === height - 1;
+                            if (isEdge) {
+                                char = 'W';  // Workshop wall/edge
+                                colorClass = 'workshop';
+                            } else {
+                                char = '.';  // Interior floor (walkable)
+                                colorClass = 'workshop-floor';
+                            }
                         } else if (entity.entity_type === 'dispenser') {
                             char = 'D';
                             colorClass = 'item';
