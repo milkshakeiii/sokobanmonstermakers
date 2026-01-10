@@ -425,6 +425,16 @@
         .owned-monster-info h4 {
             color: var(--highlight-color);
             margin-bottom: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+
+        .owned-monster-info {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
         }
 
         .owned-monster-info span {

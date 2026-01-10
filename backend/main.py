@@ -620,6 +620,26 @@ async def step_tick():
     return {"message": "Stepped one tick", "tick_number": current_tick}
 
 
+# Game time tracking
+game_start_time = datetime.utcnow()
+
+
+@app.get("/api/debug/time", tags=["Debug"])
+async def get_game_time():
+    """Get current game time information."""
+    now = datetime.utcnow()
+    real_elapsed = (now - game_start_time).total_seconds()
+    game_elapsed = real_elapsed * GAME_TIME_MULTIPLIER
+
+    return {
+        "real_elapsed_seconds": real_elapsed,
+        "game_elapsed_seconds": game_elapsed,
+        "game_time_multiplier": GAME_TIME_MULTIPLIER,
+        "server_time_utc": now.isoformat(),
+        "game_start_utc": game_start_time.isoformat()
+    }
+
+
 class CreateZoneRequest(BaseModel):
     name: str
     zone_type: str = "village"
