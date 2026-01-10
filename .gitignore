@@ -62,7 +62,6 @@ htmlcov/
 # Agent files
 .agent.lock
 .claude_settings.json
-claude-progress.txt
 
 # Dependencies (installed separately)
 deps/pyunicodegame/
