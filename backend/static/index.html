@@ -1117,16 +1117,55 @@
         .ascii-viewport .monster {
             color: var(--success-color);
             font-weight: bold;
+            display: inline-block;
+            animation: idle-bob 1.5s ease-in-out infinite;
+        }
+
+        /* Idle bobbing animation for monsters */
+        @keyframes idle-bob {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-2px);
+            }
+        }
+
+        /* More vigorous bob for working monsters */
+        .ascii-viewport .monster.working {
+            animation: working-bob 0.5s ease-in-out infinite;
+        }
+
+        @keyframes working-bob {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            25% {
+                transform: translateY(-3px);
+            }
+            75% {
+                transform: translateY(1px);
+            }
         }
 
         .ascii-viewport .other-monster {
             color: #ff7700;  /* Orange for other players' monsters */
             font-weight: bold;
             text-shadow: 0 0 3px #ff7700;
+            display: inline-block;
+            animation: idle-bob 1.5s ease-in-out infinite;
         }
 
         .ascii-viewport .item {
             color: var(--warning-color);
+        }
+
+        /* Double-width emoji items - 16x16 pixels (2 cells wide) */
+        .ascii-viewport .item-emoji {
+            /* Emoji display naturally as double-width in monospace fonts */
+            font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+            /* Ensure proper spacing for emoji */
+            letter-spacing: 0;
         }
 
         .ascii-viewport .blocked {
@@ -1672,6 +1711,7 @@
         let isAutorepeatPlaying = false;  // Is autorepeat mode active
         let autorepeatState = null;  // Current autorepeat state
         let autorepeatInterval = null;  // Interval for autorepeat playback
+        let isCraftingInProgress = false;  // Is crafting currently in progress
 
         // Viewport configuration
         const VIEWPORT_WIDTH = 60;
@@ -2676,6 +2716,7 @@
                 isAutorepeatPlaying = true;
                 autorepeatState = result;
                 updateAutorepeatUI();
+                renderViewport();  // Re-render to show working animation
                 showToast(`Autorepeat started! Playing ${result.total_actions} actions.`, 'success');
 
                 // Start autorepeat interval (execute action every 500ms)
@@ -2706,6 +2747,7 @@
                 isAutorepeatPlaying = false;
                 autorepeatState = result;
                 updateAutorepeatUI();
+                renderViewport();  // Re-render to show idle animation
                 showToast('Autorepeat stopped.', 'info');
             } catch (err) {
                 showToast('Failed to stop autorepeat: ' + err.message, 'error');
@@ -2944,8 +2986,10 @@
                 clearInterval(craftingPollInterval);
             }
 
-            // Show initial progress
+            // Show initial progress and mark monster as working
             showCraftingProgress(initialStatus);
+            isCraftingInProgress = true;
+            renderViewport();  // Re-render to show working animation
 
             // Poll for progress updates
             craftingPollInterval = setInterval(async () => {
@@ -2960,12 +3004,15 @@
                     if (!status.is_crafting || status.progress >= 1.0) {
                         clearInterval(craftingPollInterval);
                         craftingPollInterval = null;
+                        isCraftingInProgress = false;  // Monster no longer working
 
                         if (status.progress >= 1.0) {
                             showCraftingComplete(status.recipe_name, status.skill_gained);
                             // Reload zone to show output item
                             await loadZoneData();
                             renderViewport();
+                        } else {
+                            renderViewport();  // Re-render to show idle animation
                         }
                     }
                 } catch (err) {
@@ -3106,6 +3153,117 @@
                 const height = e.height || 1;
                 return x >= e.x && x < e.x + width && y >= e.y && y < e.y + height;
             });
+        }
+
+        // Get double-width emoji for item based on good_type or type_tags
+        // Items render as 16x16 pixels (2 cells wide) using emoji
+        function getItemEmoji(entity) {
+            const metadata = entity.metadata || {};
+            const goodType = (metadata.good_type || '').toLowerCase();
+            const typeTags = metadata.type_tags || [];
+
+            // Map good types to appropriate emoji
+            const goodTypeEmojis = {
+                // Raw materials
+                'raw cotton': '🌿',
+                'raw flax': '🌾',
+                'raw wool': '🐑',
+                'raw silk': '🕷️',
+                'iron ore': '🪨',
+                'copper ore': '🪨',
+                'gold ore': '✨',
+                'silver ore': '💎',
+                'coal': '⚫',
+                'clay': '🟤',
+                'sand': '🏖️',
+                'water': '💧',
+                'wood': '🪵',
+                'stone': '🪨',
+
+                // Processed materials
+                'thread': '🧵',
+                'linen thread': '🧵',
+                'silk thread': '🧵',
+                'yarn': '🧶',
+                'cloth': '🧻',
+                'linen cloth': '🧻',
+                'silk cloth': '👘',
+                'iron ingot': '🔩',
+                'copper ingot': '🔶',
+                'gold ingot': '🥇',
+                'silver ingot': '🥈',
+                'steel': '⚙️',
+                'glass': '🔮',
+                'brick': '🧱',
+                'ceramic': '🏺',
+                'pottery': '🏺',
+
+                // Dyes
+                'indigo dye': '🔵',
+                'red dye': '🔴',
+                'yellow dye': '🟡',
+                'green dye': '🟢',
+                'purple dye': '🟣',
+                'dye': '🎨',
+
+                // Tools
+                'hammer': '🔨',
+                'pickaxe': '⛏️',
+                'axe': '🪓',
+                'saw': '🪚',
+                'needle': '🪡',
+                'spindle': '🧵',
+                'loom': '🧶',
+                'anvil': '🔨',
+                'tongs': '🔧',
+                'chisel': '🔧',
+
+                // Food/drinks
+                'bread': '🍞',
+                'beer': '🍺',
+                'wine': '🍷',
+                'cheese': '🧀',
+                'meat': '🥩',
+                'fish': '🐟',
+                'fruit': '🍎',
+                'grain': '🌾',
+
+                // Finished goods
+                'sword': '⚔️',
+                'shield': '🛡️',
+                'armor': '🛡️',
+                'jewelry': '💍',
+                'ring': '💍',
+                'necklace': '📿',
+                'clothing': '👕',
+                'rope': '🪢',
+                'basket': '🧺',
+                'candle': '🕯️',
+                'book': '📖',
+                'scroll': '📜'
+            };
+
+            // Check exact match first
+            if (goodTypeEmojis[goodType]) {
+                return goodTypeEmojis[goodType];
+            }
+
+            // Check type tags for category-based emoji
+            if (typeTags.includes('metal') || typeTags.includes('ore')) return '🪨';
+            if (typeTags.includes('fiber') || typeTags.includes('raw')) return '🌿';
+            if (typeTags.includes('thread')) return '🧵';
+            if (typeTags.includes('cloth') || typeTags.includes('textile')) return '🧻';
+            if (typeTags.includes('dye')) return '🎨';
+            if (typeTags.includes('tool')) return '🔧';
+            if (typeTags.includes('weapon')) return '⚔️';
+            if (typeTags.includes('food')) return '🍞';
+            if (typeTags.includes('drink')) return '🍺';
+            if (typeTags.includes('ceramic') || typeTags.includes('pottery')) return '🏺';
+            if (typeTags.includes('luxury')) return '💎';
+            if (typeTags.includes('wood')) return '🪵';
+
+            // Default item emoji
+            return '📦';
         }
 
         // Select an object and show its info in the panel
@@ -3261,13 +3419,29 @@
             let grid = [];
             for (let y = 0; y < VIEWPORT_HEIGHT; y++) {
                 let row = '';
+                let skipNext = false;  // Track if we should skip next cell (for double-width chars)
                 for (let x = 0; x < VIEWPORT_WIDTH; x++) {
                     const worldX = cameraX + x;
                     const worldY = cameraY + y;
 
+                    // Check if a monster is at this position (monsters always render, never skipped)
+                    const isPlayerMonsterHere = (worldX === monsterX && worldY === monsterY);
+                    const otherMonsterHere = zoneMonsters.find(m =>
+                        m.x === worldX && m.y === worldY && m.id !== activeMonster.id
+                    );
+
+                    // Skip this cell if the previous was a double-width character
+                    // BUT never skip if there's a monster here
+                    if (skipNext && !isPlayerMonsterHere && !otherMonsterHere) {
+                        skipNext = false;
+                        continue;
+                    }
+                    skipNext = false;  // Reset skipNext after check
+
                     // Determine what to display at this position
                     let char = '.';  // Default grass
                     let colorClass = 'grass';
+                    let isDoubleWidth = false;  // Flag for double-width characters (items)
 
                     // Check for blocked terrain
                     if (isBlockedTerrain(worldX, worldY)) {
@@ -3279,8 +3453,17 @@
                     const entity = getEntityAt(worldX, worldY);
                     if (entity) {
                         if (entity.entity_type === 'item') {
-                            char = '*';
-                            colorClass = 'item';
+                            // Items render as double-width emoji (16x16 pixels)
+                            // Only render at the item's origin position
+                            if (entity.x === worldX) {
+                                char = getItemEmoji(entity);
+                                colorClass = 'item item-emoji';
+                                isDoubleWidth = true;
+                            } else {
+                                // This is the second cell of the item - skip rendering
+                                // (the emoji from the first cell already covers this)
+                                continue;
+                            }
                         } else if (entity.entity_type === 'workshop') {
                             // Workshop rendering - edges vs interior
                             const width = entity.width || 4;
@@ -3312,22 +3495,28 @@
                     }
 
                     // Check for other monsters (multiplayer visibility)
-                    const otherMonster = zoneMonsters.find(m =>
-                        m.x === worldX && m.y === worldY && m.id !== activeMonster.id
-                    );
-                    if (otherMonster) {
+                    // Use the check we already did above
+                    if (otherMonsterHere) {
                         char = 'M';  // Other player's monster
                         colorClass = 'other-monster';
                     }
 
                     // Check for player's own monster (takes priority)
-                    if (worldX === monsterX && worldY === monsterY) {
+                    // Use the check we already did above
+                    if (isPlayerMonsterHere) {
                         char = '@';
-                        colorClass = 'monster';
+                        // Add 'working' class for vigorous bob animation when crafting or autorepeat
+                        const isWorking = isCraftingInProgress || isAutorepeatPlaying;
+                        colorClass = isWorking ? 'monster working' : 'monster';
                     }
 
                     // Add character with color span
                     row += `<span class="${colorClass}">${char}</span>`;
+
+                    // If this was a double-width character, skip the next cell
+                    if (isDoubleWidth) {
+                        skipNext = true;
+                    }
                 }
                 grid.push(row);
             }
