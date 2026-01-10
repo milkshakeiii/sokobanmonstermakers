@@ -874,3 +874,77 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 1. Get next pending feature from feature_get_next
 2. Consider adding age indicator to UI
 3. Continue with remaining economy/crafting features
+---
+
+## Session 13 - Visual Effects Implementation
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Feature 147: Double-width item rendering**
+   - Items now render as 16x16 pixel emoji (double-width)
+   - Added getItemEmoji() function with comprehensive good_type → emoji mapping
+   - Fixed monster visibility when adjacent to double-width items
+
+2. **Feature 148: Monster idle bob animation**
+   - Added 1.5s gentle vertical bob animation for monsters
+   - Used CSS keyframe animation with transform: translateY
+
+3. **Feature 149: Monster working animation**
+   - Added faster 0.5s bob animation when crafting/autorepeat
+   - Added isCraftingInProgress state tracking
+
+4. **Feature 150: Crafting particles effect**
+   - Workshop-specific particles during crafting
+   - Sparks (⚡🔥✨) for smithing, steam (💨☁️) for cooking
+   - Thread (🧵) for weaving, magic (✨💫🌟) for enchanting
+
+5. **Feature 153: Exceptional quality emissive glow**
+   - Items ≥90% quality have animated gold glow
+   - Items ≥75% quality have subtle silver glow
+   - Multiple layered drop-shadows for bloom effect
+
+6. **Feature 154: Durability red tint visualization**
+   - Critical (<20%): strong red tint
+   - Low (20-50%): moderate red tint
+   - Worn (50-75%): slight red/orange tint
+
+7. **Feature 156: Workshop particle emitters**
+   - Workshops emit ambient particles based on type
+   - Interval-based particle spawning system
+   - Particles float up and fade out over 3 seconds
+
+8. **Feature 157: Bloom post-processing**
+   - Enhanced glowing effects with multiple layered shadows
+   - Signposts, delivery spots, exceptional items all have bloom
+
+9. **Feature 168: Multi-cell entity rendering**
+   - Wagons render as 2x2 boxes using box-drawing characters (╔╗╚╝)
+   - Goldenrod color for visibility
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 155
+- In progress: 0
+- Completion: 90.6%
+
+### Files Modified This Session:
+- backend/static/index.html:
+  - Added getItemEmoji() function for emoji item rendering
+  - Added monster animation CSS (idle-bob, working-bob)
+  - Added crafting particle system (getParticleConfig, generateParticlesHtml)
+  - Added workshop ambient particle emitter system
+  - Added exceptional-quality and high-quality glow CSS
+  - Added durability tint CSS (critical, low, worn)
+  - Added bloom post-processing CSS with multi-layer shadows
+  - Added wagon rendering with box-drawing characters
+
+- backend/main.py:
+  - Added workshop_type field to CraftingStatus model
+
+### Next Steps for Future Agents:
+1. Continue with remaining 16 features
+2. Run regression tests on passing features
+3. Focus on any remaining core gameplay features
+
