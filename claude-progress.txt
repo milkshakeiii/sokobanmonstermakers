@@ -842,17 +842,22 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 
 ### Feature Statistics:
 - Total features: 171
-- Passing: 82
+- Passing: 83
 - In progress: 0
-- Completion: 48.0%
+- Completion: 48.5%
 
 ### Features Verified This Session:
 - Feature 34: Monster aging stat bonus at 30 days
   - ✓ Create new monster with known initial stats
   - ✓ Advance game time to 30 days
   - ✓ All ability scores increased by 1
-  - ✓ Advance to 60 days for +2 bonus
   - ✓ Aging bonus permanent (based on created_at timestamp)
+
+- Feature 35: Monster aging stat bonus at 60 days
+  - ✓ Monster at 30+ days age (tested with existing monster)
+  - ✓ Advance game time to 60 days
+  - ✓ Additional +1 to all stats (total +2)
+  - ✓ Verified total bonus is +2 from creation stats
 
 ### Files Modified This Session:
 - backend/main.py:
