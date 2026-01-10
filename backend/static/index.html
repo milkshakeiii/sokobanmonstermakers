@@ -463,6 +463,32 @@
             font-weight: bold;
         }
 
+        /* Responsive adjustments */
+        @media (max-width: 600px) {
+            .header-bar {
+                flex-direction: column;
+                gap: 12px;
+                align-items: stretch;
+            }
+
+            .header-bar .player-info {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .header-bar .player-info span {
+                word-break: break-word;
+            }
+
+            .monster-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .container {
+                padding: 10px;
+            }
+        }
+
         /* Toast Notification Styles */
         .toast-container {
             position: fixed;
