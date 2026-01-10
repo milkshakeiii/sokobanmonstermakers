@@ -1110,3 +1110,71 @@ Most remaining features require significant new functionality:
 3. Add delete monster functionality
 4. Implement pagination for large lists
 
+---
+
+## Session 16 - Implementation Agent (continued)
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Feature 90: Bulk item transport with wagon**
+   - Added wagon helper functions:
+     - `is_position_on_wagon(wagon, x, y)` - check if position is on wagon area
+     - `get_wagon_capacity(wagon)` - get wagon storage capacity (default 4)
+     - `get_wagon_loaded_items(wagon)` - get list of items in wagon
+   - Modified push logic to detect when items are pushed INTO wagons
+   - When item is pushed onto wagon position:
+     - Item data stored in wagon's `loaded_items` metadata
+     - Physical item entity is deleted
+     - Deposit info shows "Wagon (X/Y loaded)"
+   - Added `/api/wagon/unload` POST endpoint:
+     - Unloads first item from hitched wagon
+     - Places item in adjacent empty cell
+     - Returns unloaded item name and position
+   - Added `/api/wagon/{wagon_id}/contents` GET endpoint:
+     - Returns wagon position, capacity, loaded items, space available
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 165
+- In progress: 0
+- Completion: 96.5%
+
+### Verification Tests:
+- Created test items at (5,6) and (5,7) adjacent to wagon at (3,6)
+- Teleported monster to (6,6) and pushed items left into wagon
+- Verified wagon contents showed 2 loaded items
+- Hitched to wagon and moved right, wagon followed
+- Used unload endpoint to unload both items
+- Verified items appeared at (4,8) and (4,9) adjacent to wagon
+- Wagon contents showed empty after unloading
+
+### Files Modified This Session:
+- backend/main.py:
+  - Added `is_position_on_wagon()`, `get_wagon_capacity()`, `get_wagon_loaded_items()` helpers
+  - Modified push logic to detect wagon destinations and store items
+  - Added `WagonUnloadRequest` and `WagonUnloadResponse` models
+  - Added `/api/wagon/unload` endpoint for unloading items
+  - Added `/api/wagon/{wagon_id}/contents` endpoint for viewing wagon contents
+
+### Git Commits:
+- df5dc48: Implement wagon bulk item transport (Feature 90)
+
+### Technical Notes:
+- Wagons are 2x2 multi-cell entities
+- Default capacity is 4 items (one per cell)
+- Items store original metadata when loaded for preservation
+- Unload finds first available adjacent cell (not on wagon, not blocked)
+- Both loading and unloading work with hitched wagons
+
+### Remaining Features (6 not yet passing):
+- Feature 94, 117-119: Search functionality
+- Feature 112: Delete monster
+- Feature 116: Pagination
+
+### Next Steps for Future Agents:
+1. Add search/filter UI for monster list
+2. Add delete monster functionality
+3. Implement pagination for large lists
+
