@@ -155,6 +155,49 @@ class MoveResult(BaseModel):
     deposit: Optional[DepositInfo] = None  # Info if item was deposited into workshop
 
 
+class RecordingAction(BaseModel):
+    """A single recorded action in a recording sequence."""
+    action_type: str  # "move", "push", "interact", "deposit"
+    direction: Optional[str] = None  # For move/push actions
+    entity_id: Optional[str] = None  # Entity interacted with
+    timestamp: str  # ISO timestamp
+
+
+class RecordingState(BaseModel):
+    """Current state of a recording in progress."""
+    is_recording: bool
+    started_at: Optional[str] = None
+    workshop_id: Optional[str] = None  # Workshop being crafted at
+    recipe_id: Optional[int] = None  # Selected recipe
+    actions: list[RecordingAction] = []
+
+
+class StartRecordingRequest(BaseModel):
+    monster_id: str
+    workshop_id: Optional[str] = None  # Optional - workshop to associate with
+    recipe_id: Optional[int] = None  # Optional - recipe selected
+
+
+class StopRecordingRequest(BaseModel):
+    monster_id: str
+
+
+class StartAutorepeatRequest(BaseModel):
+    monster_id: str
+
+
+class StopAutorepeatRequest(BaseModel):
+    monster_id: str
+
+
+class AutorepeatState(BaseModel):
+    """Current state of autorepeat playback."""
+    is_playing: bool
+    current_action_index: int = 0
+    total_actions: int = 0
+    recorded_sequence: list[RecordingAction] = []
+
+
 class CreateMonsterRequest(BaseModel):
     monster_type: str
     name: str = Field(..., min_length=1, max_length=100)
@@ -942,6 +985,24 @@ async def move_monster(request: MoveMonsterRequest, token: str):
         # Update position
         monster.x = new_x
         monster.y = new_y
+
+        # Record the action if recording is active
+        current_task = monster.current_task or {}
+        if current_task.get('is_recording'):
+            action_type = "push" if pushed_item_name else "move"
+            if deposit_info:
+                action_type = "deposit"
+
+            new_action = {
+                'action_type': action_type,
+                'direction': request.direction,
+                'entity_id': deposit_info.workshop_id if deposit_info else None,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            current_task['actions'].append(new_action)
+            monster.current_task = current_task
+            flag_modified(monster, 'current_task')
+
         await session.commit()
         await session.refresh(monster)
 
@@ -1414,6 +1475,414 @@ async def switch_monster(request: SwitchMonsterRequest, token: str):
             current_zone_id=monster.current_zone_id,
             x=monster.x,
             y=monster.y
+        )
+
+
+# =============================================================================
+# Recording System Endpoints
+# =============================================================================
+
+
+@app.post("/api/monsters/recording/start", response_model=RecordingState, tags=["Recording"])
+async def start_recording(request: StartRecordingRequest, token: str):
+    """Start recording a sequence of actions for batch crafting playback."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        # Check if already recording
+        current_task = monster.current_task or {}
+        if current_task.get('is_recording'):
+            raise HTTPException(
+                status_code=400,
+                detail="Monster is already recording. Stop recording first."
+            )
+
+        # Start recording
+        started_at = datetime.utcnow().isoformat()
+        recording_state = {
+            'is_recording': True,
+            'started_at': started_at,
+            'workshop_id': request.workshop_id,
+            'recipe_id': request.recipe_id,
+            'actions': []
+        }
+
+        monster.current_task = recording_state
+        flag_modified(monster, 'current_task')
+        await session.commit()
+
+        return RecordingState(
+            is_recording=True,
+            started_at=started_at,
+            workshop_id=request.workshop_id,
+            recipe_id=request.recipe_id,
+            actions=[]
+        )
+
+
+@app.post("/api/monsters/recording/stop", response_model=RecordingState, tags=["Recording"])
+async def stop_recording(request: StopRecordingRequest, token: str):
+    """Stop recording and return the recorded sequence."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        # Check if currently recording
+        current_task = monster.current_task or {}
+        if not current_task.get('is_recording'):
+            raise HTTPException(
+                status_code=400,
+                detail="Monster is not currently recording."
+            )
+
+        # Get the recorded actions before clearing
+        recorded_state = RecordingState(
+            is_recording=False,
+            started_at=current_task.get('started_at'),
+            workshop_id=current_task.get('workshop_id'),
+            recipe_id=current_task.get('recipe_id'),
+            actions=[RecordingAction(**a) for a in current_task.get('actions', [])]
+        )
+
+        # Clear the recording but keep the recorded sequence for playback
+        monster.current_task = {
+            'is_recording': False,
+            'recorded_sequence': current_task.get('actions', []),
+            'workshop_id': current_task.get('workshop_id'),
+            'recipe_id': current_task.get('recipe_id')
+        }
+        flag_modified(monster, 'current_task')
+        await session.commit()
+
+        return recorded_state
+
+
+@app.get("/api/monsters/{monster_id}/recording", response_model=RecordingState, tags=["Recording"])
+async def get_recording_status(monster_id: str, token: str):
+    """Get the current recording status for a monster."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only view recording status for your own monsters"
+            )
+
+        current_task = monster.current_task or {}
+
+        if current_task.get('is_recording'):
+            return RecordingState(
+                is_recording=True,
+                started_at=current_task.get('started_at'),
+                workshop_id=current_task.get('workshop_id'),
+                recipe_id=current_task.get('recipe_id'),
+                actions=[RecordingAction(**a) for a in current_task.get('actions', [])]
+            )
+        else:
+            return RecordingState(
+                is_recording=False,
+                started_at=None,
+                workshop_id=None,
+                recipe_id=None,
+                actions=[]
+            )
+
+
+# =============================================================================
+# Autorepeat System Endpoints
+# =============================================================================
+
+
+@app.post("/api/monsters/autorepeat/start", response_model=AutorepeatState, tags=["Autorepeat"])
+async def start_autorepeat(request: StartAutorepeatRequest, token: str):
+    """Start auto-repeating a previously recorded sequence."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        current_task = monster.current_task or {}
+
+        # Check if currently recording (can't autorepeat while recording)
+        if current_task.get('is_recording'):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot start autorepeat while recording. Stop recording first."
+            )
+
+        # Check if there's a recorded sequence
+        recorded_sequence = current_task.get('recorded_sequence', [])
+        if not recorded_sequence:
+            raise HTTPException(
+                status_code=400,
+                detail="No recorded sequence available. Record a sequence first."
+            )
+
+        # Check if already playing
+        if current_task.get('is_playing'):
+            raise HTTPException(
+                status_code=400,
+                detail="Autorepeat is already running."
+            )
+
+        # Start autorepeat
+        current_task['is_playing'] = True
+        current_task['current_action_index'] = 0
+        monster.current_task = current_task
+        flag_modified(monster, 'current_task')
+        await session.commit()
+
+        return AutorepeatState(
+            is_playing=True,
+            current_action_index=0,
+            total_actions=len(recorded_sequence),
+            recorded_sequence=[RecordingAction(**a) for a in recorded_sequence]
+        )
+
+
+@app.post("/api/monsters/autorepeat/stop", response_model=AutorepeatState, tags=["Autorepeat"])
+async def stop_autorepeat(request: StopAutorepeatRequest, token: str):
+    """Stop auto-repeating the recorded sequence."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        current_task = monster.current_task or {}
+
+        # Stop autorepeat
+        current_task['is_playing'] = False
+        monster.current_task = current_task
+        flag_modified(monster, 'current_task')
+        await session.commit()
+
+        recorded_sequence = current_task.get('recorded_sequence', [])
+        return AutorepeatState(
+            is_playing=False,
+            current_action_index=current_task.get('current_action_index', 0),
+            total_actions=len(recorded_sequence),
+            recorded_sequence=[RecordingAction(**a) for a in recorded_sequence]
+        )
+
+
+@app.post("/api/monsters/autorepeat/step", tags=["Autorepeat"])
+async def autorepeat_step(request: StartAutorepeatRequest, token: str):
+    """Execute the next action in the autorepeat sequence. Returns the action taken."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        current_task = monster.current_task or {}
+
+        if not current_task.get('is_playing'):
+            raise HTTPException(
+                status_code=400,
+                detail="Autorepeat is not running."
+            )
+
+        recorded_sequence = current_task.get('recorded_sequence', [])
+        current_index = current_task.get('current_action_index', 0)
+
+        if current_index >= len(recorded_sequence):
+            # Sequence complete - loop back to start
+            current_index = 0
+
+        action = recorded_sequence[current_index]
+        action_type = action.get('action_type')
+        direction = action.get('direction')
+
+        result_message = f"Executed action {current_index + 1}/{len(recorded_sequence)}: {action_type}"
+
+        # Execute the action
+        if action_type == 'move' and direction:
+            # Calculate new position
+            new_x, new_y = monster.x, monster.y
+            if direction == "up":
+                new_y -= 1
+            elif direction == "down":
+                new_y += 1
+            elif direction == "left":
+                new_x -= 1
+            elif direction == "right":
+                new_x += 1
+
+            # Update position (simplified - no collision check for autorepeat)
+            monster.x = new_x
+            monster.y = new_y
+            result_message += f" {direction} -> ({new_x}, {new_y})"
+
+        # Increment index
+        current_task['current_action_index'] = current_index + 1
+        monster.current_task = current_task
+        flag_modified(monster, 'current_task')
+        await session.commit()
+
+        return {
+            "message": result_message,
+            "action": action,
+            "current_index": current_index + 1,
+            "total_actions": len(recorded_sequence),
+            "monster_position": {"x": monster.x, "y": monster.y}
+        }
+
+
+@app.get("/api/monsters/{monster_id}/autorepeat", response_model=AutorepeatState, tags=["Autorepeat"])
+async def get_autorepeat_status(monster_id: str, token: str):
+    """Get the current autorepeat status for a monster."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only view autorepeat status for your own monsters"
+            )
+
+        current_task = monster.current_task or {}
+        recorded_sequence = current_task.get('recorded_sequence', [])
+
+        return AutorepeatState(
+            is_playing=current_task.get('is_playing', False),
+            current_action_index=current_task.get('current_action_index', 0),
+            total_actions=len(recorded_sequence),
+            recorded_sequence=[RecordingAction(**a) for a in recorded_sequence]
         )
 
 

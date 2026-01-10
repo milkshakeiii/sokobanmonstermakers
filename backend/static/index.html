@@ -872,6 +872,135 @@
             font-weight: bold;
         }
 
+        .viewport-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .recording-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background-color: rgba(255, 50, 50, 0.2);
+            border: 1px solid var(--error-color);
+            border-radius: 4px;
+            animation: recording-pulse 1.5s infinite;
+        }
+
+        .recording-indicator.hidden {
+            display: none;
+        }
+
+        .recording-dot {
+            width: 10px;
+            height: 10px;
+            background-color: var(--error-color);
+            border-radius: 50%;
+            animation: recording-blink 1s infinite;
+        }
+
+        .recording-text {
+            color: var(--error-color);
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+
+        .recording-count {
+            color: var(--text-color);
+            font-size: 0.8rem;
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        @keyframes recording-pulse {
+            0%, 100% { background-color: rgba(255, 50, 50, 0.1); }
+            50% { background-color: rgba(255, 50, 50, 0.25); }
+        }
+
+        @keyframes recording-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .btn-warning {
+            background-color: transparent;
+            border-color: var(--warning-color);
+            color: var(--warning-color);
+        }
+
+        .btn-warning:hover:not(:disabled) {
+            background-color: var(--warning-color);
+            color: var(--bg-color);
+        }
+
+        .btn-warning.recording {
+            background-color: var(--error-color);
+            border-color: var(--error-color);
+            color: white;
+        }
+
+        .btn-success {
+            background-color: transparent;
+            border-color: var(--success-color);
+            color: var(--success-color);
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background-color: var(--success-color);
+            color: var(--bg-color);
+        }
+
+        .btn-success.playing {
+            background-color: var(--success-color);
+            color: var(--bg-color);
+        }
+
+        .autorepeat-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background-color: rgba(100, 255, 100, 0.2);
+            border: 1px solid var(--success-color);
+            border-radius: 4px;
+            animation: autorepeat-pulse 1.5s infinite;
+        }
+
+        .autorepeat-indicator.hidden {
+            display: none;
+        }
+
+        .autorepeat-icon {
+            color: var(--success-color);
+            font-size: 0.9rem;
+        }
+
+        .autorepeat-text {
+            color: var(--success-color);
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+
+        .autorepeat-progress {
+            color: var(--text-color);
+            font-size: 0.8rem;
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        @keyframes autorepeat-pulse {
+            0%, 100% { background-color: rgba(100, 255, 100, 0.1); }
+            50% { background-color: rgba(100, 255, 100, 0.25); }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
         .viewport-area {
             flex: 1;
             background-color: #0d0d15;
@@ -1260,7 +1389,21 @@
             <div class="game-viewport">
                 <div class="viewport-header">
                     <span id="zone-name-display">Starting Village</span>
-                    <button class="btn btn-secondary btn-small" id="back-to-monsters-btn">Change Monster</button>
+                    <div class="viewport-controls">
+                        <div id="recording-indicator" class="recording-indicator hidden">
+                            <span class="recording-dot"></span>
+                            <span class="recording-text">REC</span>
+                            <span class="recording-count" id="recording-count">0</span>
+                        </div>
+                        <div id="autorepeat-indicator" class="autorepeat-indicator hidden">
+                            <span class="autorepeat-icon">▶</span>
+                            <span class="autorepeat-text">PLAY</span>
+                            <span class="autorepeat-progress" id="autorepeat-progress">0/0</span>
+                        </div>
+                        <button class="btn btn-warning btn-small" id="record-btn" title="Start Recording (R)">Record</button>
+                        <button class="btn btn-success btn-small hidden" id="play-btn" title="Start Autorepeat (P)">Play</button>
+                        <button class="btn btn-secondary btn-small" id="back-to-monsters-btn">Change Monster</button>
+                    </div>
                 </div>
                 <div class="viewport-area" id="viewport-area">
                     <div class="viewport-placeholder">
@@ -1291,6 +1434,11 @@
         let selectedSkills = [];   // Currently selected skills for new monster (max 3)
         let zoneEntities = [];     // Entities in the current zone
         let zoneTerrainData = {};  // Terrain data for the current zone
+        let isRecording = false;   // Is recording mode active
+        let recordingState = null; // Current recording state from server
+        let isAutorepeatPlaying = false;  // Is autorepeat mode active
+        let autorepeatState = null;  // Current autorepeat state
+        let autorepeatInterval = null;  // Interval for autorepeat playback
 
         // Viewport configuration
         const VIEWPORT_WIDTH = 60;
@@ -1506,6 +1654,11 @@
                 activeMonster = result;
                 showToast(`Now controlling ${result.name}!`, 'success');
                 showGameScreen();
+
+                // Fetch recording and autorepeat status when entering game
+                await fetchRecordingStatus();
+                await fetchAutorepeatStatus();
+                updatePlayButtonVisibility();
             } catch (err) {
                 showToast('Failed to select monster: ' + err.message, 'error');
             }
@@ -1859,6 +2012,12 @@
             showMonsterScreen();
         });
 
+        // Recording button
+        document.getElementById('record-btn').addEventListener('click', toggleRecording);
+
+        // Play/autorepeat button
+        document.getElementById('play-btn').addEventListener('click', toggleAutorepeat);
+
         // Keyboard movement handling
         document.addEventListener('keydown', async (e) => {
             // Handle recipe popup keys first
@@ -1914,6 +2073,16 @@
                     e.preventDefault();
                     await interactWithEntity();
                     return;
+                case 'r':
+                case 'R':
+                    e.preventDefault();
+                    await toggleRecording();
+                    return;
+                case 'p':
+                case 'P':
+                    e.preventDefault();
+                    await toggleAutorepeat();
+                    return;
             }
 
             if (direction) {
@@ -1944,6 +2113,11 @@
                 if (result.deposit) {
                     showDepositFlash(result.deposit.slot_x, result.deposit.slot_y);
                     showToast(`Deposited ${result.deposit.item_name} into ${result.deposit.workshop_name}!`, 'success');
+                }
+
+                // Update recording count if recording
+                if (isRecording) {
+                    await fetchRecordingStatus();
                 }
             } catch (err) {
                 showToast('Move failed: ' + err.message, 'error');
@@ -1997,6 +2171,245 @@
         // Current recipes displayed in popup
         let currentRecipes = [];
         let recipePopupOpen = false;
+
+        // =============================================================================
+        // Recording System Functions
+        // =============================================================================
+
+        // Toggle recording on/off
+        async function toggleRecording() {
+            if (!activeMonster) return;
+
+            if (isRecording) {
+                await stopRecording();
+            } else {
+                await startRecording();
+            }
+        }
+
+        // Start recording
+        async function startRecording() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/recording/start?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                isRecording = true;
+                recordingState = result;
+                updateRecordingUI();
+                showToast('Recording started! Your movements are being tracked.', 'info');
+            } catch (err) {
+                showToast('Failed to start recording: ' + err.message, 'error');
+            }
+        }
+
+        // Stop recording
+        async function stopRecording() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/recording/stop?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                isRecording = false;
+                recordingState = result;
+                const actionCount = result.actions ? result.actions.length : 0;
+                updateRecordingUI();
+                showToast(`Recording stopped! ${actionCount} actions recorded.`, 'success');
+            } catch (err) {
+                showToast('Failed to stop recording: ' + err.message, 'error');
+            }
+        }
+
+        // Fetch current recording status
+        async function fetchRecordingStatus() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/${activeMonster.id}/recording?token=${authToken}`, 'GET');
+                isRecording = result.is_recording;
+                recordingState = result;
+                updateRecordingUI();
+            } catch (err) {
+                console.error('Failed to fetch recording status:', err);
+            }
+        }
+
+        // Update the recording UI elements
+        function updateRecordingUI() {
+            const recordBtn = document.getElementById('record-btn');
+            const recordingIndicator = document.getElementById('recording-indicator');
+            const recordingCount = document.getElementById('recording-count');
+
+            if (isRecording) {
+                recordBtn.textContent = 'Stop';
+                recordBtn.classList.add('recording');
+                recordingIndicator.classList.remove('hidden');
+
+                // Update action count
+                const actionCount = recordingState && recordingState.actions ? recordingState.actions.length : 0;
+                recordingCount.textContent = actionCount;
+            } else {
+                recordBtn.textContent = 'Record';
+                recordBtn.classList.remove('recording');
+                recordingIndicator.classList.add('hidden');
+            }
+
+            // Show/hide play button based on whether there's a recorded sequence
+            updatePlayButtonVisibility();
+        }
+
+        // =============================================================================
+        // Autorepeat System Functions
+        // =============================================================================
+
+        // Toggle autorepeat on/off
+        async function toggleAutorepeat() {
+            if (!activeMonster) return;
+
+            if (isAutorepeatPlaying) {
+                await stopAutorepeat();
+            } else {
+                await startAutorepeat();
+            }
+        }
+
+        // Start autorepeat playback
+        async function startAutorepeat() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/autorepeat/start?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                isAutorepeatPlaying = true;
+                autorepeatState = result;
+                updateAutorepeatUI();
+                showToast(`Autorepeat started! Playing ${result.total_actions} actions.`, 'success');
+
+                // Start autorepeat interval (execute action every 500ms)
+                autorepeatInterval = setInterval(async () => {
+                    await executeAutorepeatStep();
+                }, 500);
+
+            } catch (err) {
+                showToast('Failed to start autorepeat: ' + err.message, 'error');
+            }
+        }
+
+        // Stop autorepeat playback
+        async function stopAutorepeat() {
+            if (!activeMonster) return;
+
+            // Clear the interval first
+            if (autorepeatInterval) {
+                clearInterval(autorepeatInterval);
+                autorepeatInterval = null;
+            }
+
+            try {
+                const result = await apiCall(`/api/monsters/autorepeat/stop?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                isAutorepeatPlaying = false;
+                autorepeatState = result;
+                updateAutorepeatUI();
+                showToast('Autorepeat stopped.', 'info');
+            } catch (err) {
+                showToast('Failed to stop autorepeat: ' + err.message, 'error');
+            }
+        }
+
+        // Execute a single autorepeat step
+        async function executeAutorepeatStep() {
+            if (!activeMonster || !isAutorepeatPlaying) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/autorepeat/step?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                // Update monster position
+                if (result.monster_position) {
+                    activeMonster.x = result.monster_position.x;
+                    activeMonster.y = result.monster_position.y;
+                    updateMonsterPanel();
+                    await loadZoneData();
+                    renderViewport();
+                }
+
+                // Update progress display
+                const autorepeatProgress = document.getElementById('autorepeat-progress');
+                autorepeatProgress.textContent = `${result.current_index}/${result.total_actions}`;
+
+            } catch (err) {
+                // Stop autorepeat on error
+                if (autorepeatInterval) {
+                    clearInterval(autorepeatInterval);
+                    autorepeatInterval = null;
+                }
+                isAutorepeatPlaying = false;
+                updateAutorepeatUI();
+                showToast('Autorepeat error: ' + err.message, 'error');
+            }
+        }
+
+        // Fetch current autorepeat status
+        async function fetchAutorepeatStatus() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/${activeMonster.id}/autorepeat?token=${authToken}`, 'GET');
+                isAutorepeatPlaying = result.is_playing;
+                autorepeatState = result;
+                updateAutorepeatUI();
+            } catch (err) {
+                console.error('Failed to fetch autorepeat status:', err);
+            }
+        }
+
+        // Update the autorepeat UI elements
+        function updateAutorepeatUI() {
+            const playBtn = document.getElementById('play-btn');
+            const autorepeatIndicator = document.getElementById('autorepeat-indicator');
+            const autorepeatProgress = document.getElementById('autorepeat-progress');
+
+            if (isAutorepeatPlaying) {
+                playBtn.textContent = 'Stop';
+                playBtn.classList.add('playing');
+                autorepeatIndicator.classList.remove('hidden');
+
+                // Update progress
+                const currentIndex = autorepeatState ? autorepeatState.current_action_index : 0;
+                const totalActions = autorepeatState ? autorepeatState.total_actions : 0;
+                autorepeatProgress.textContent = `${currentIndex}/${totalActions}`;
+            } else {
+                playBtn.textContent = 'Play';
+                playBtn.classList.remove('playing');
+                autorepeatIndicator.classList.add('hidden');
+            }
+        }
+
+        // Show/hide the play button based on recorded sequence availability
+        function updatePlayButtonVisibility() {
+            const playBtn = document.getElementById('play-btn');
+
+            // Check if we have a recorded sequence
+            const hasRecording = recordingState && recordingState.actions && recordingState.actions.length > 0;
+
+            // Also check if monster has a recorded_sequence via API (fetched when entering game)
+            // For now, show play button if not recording and after any recording session
+            if (!isRecording) {
+                playBtn.classList.remove('hidden');
+            } else {
+                playBtn.classList.add('hidden');
+            }
+        }
 
         // Interact with adjacent entity (signpost, workshop, etc.)
         async function interactWithEntity() {
