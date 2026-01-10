@@ -565,6 +565,93 @@ async def create_monster(request: CreateMonsterRequest, token: str):
         )
 
 
+class MoveMonsterRequest(BaseModel):
+    monster_id: str
+    direction: str  # up, down, left, right
+
+
+@app.post("/api/monsters/move", response_model=MonsterInfo, tags=["Monsters"])
+async def move_monster(request: MoveMonsterRequest, token: str):
+    """Move a monster one cell in the specified direction."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Validate direction
+        valid_directions = ["up", "down", "left", "right"]
+        if request.direction not in valid_directions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid direction. Must be one of: {', '.join(valid_directions)}"
+            )
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        # Calculate new position (one cell at a time)
+        new_x, new_y = monster.x, monster.y
+        if request.direction == "up":
+            new_y -= 1
+        elif request.direction == "down":
+            new_y += 1
+        elif request.direction == "left":
+            new_x -= 1
+        elif request.direction == "right":
+            new_x += 1
+
+        # Basic boundary checking (zones are typically 100x100)
+        # TODO: Get actual zone bounds and collision checking
+        if new_x < 0:
+            new_x = 0
+        if new_y < 0:
+            new_y = 0
+        if new_x > 99:
+            new_x = 99
+        if new_y > 99:
+            new_y = 99
+
+        # Update position
+        monster.x = new_x
+        monster.y = new_y
+        await session.commit()
+        await session.refresh(monster)
+
+        return MonsterInfo(
+            id=monster.id,
+            name=monster.name,
+            monster_type=monster.monster_type,
+            str_=monster.str_,
+            dex=monster.dex,
+            con=monster.con,
+            int_=monster.int_,
+            wis=monster.wis,
+            cha=monster.cha,
+            body_fitting_used=monster.body_fitting_used,
+            mind_fitting_used=monster.mind_fitting_used,
+            current_zone_id=monster.current_zone_id,
+            x=monster.x,
+            y=monster.y
+        )
+
+
 @app.post("/api/monsters/switch", response_model=MonsterInfo, tags=["Monsters"])
 async def switch_monster(request: SwitchMonsterRequest, token: str):
     """Switch to controlling a different monster. Players can only control their own monsters."""

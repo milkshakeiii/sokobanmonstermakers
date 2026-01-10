@@ -1577,6 +1577,61 @@
             showMonsterScreen();
         });
 
+        // Keyboard movement handling
+        document.addEventListener('keydown', async (e) => {
+            // Only handle movement in game screen
+            if (!gameScreen.classList.contains('active') || !activeMonster) {
+                return;
+            }
+
+            let direction = null;
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    direction = 'up';
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    direction = 'down';
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    direction = 'left';
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    direction = 'right';
+                    break;
+            }
+
+            if (direction) {
+                e.preventDefault();
+                await moveMonster(direction);
+            }
+        });
+
+        // Move monster function
+        async function moveMonster(direction) {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/move?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id,
+                    direction: direction
+                });
+
+                // Update active monster state
+                activeMonster = result;
+                updateMonsterPanel();
+            } catch (err) {
+                showToast('Move failed: ' + err.message, 'error');
+            }
+        }
+
         // Initial check
         checkAuth();
     </script>
