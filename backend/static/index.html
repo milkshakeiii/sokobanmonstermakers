@@ -495,6 +495,31 @@
             font-style: italic;
         }
 
+        .pagination-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            margin-top: 16px;
+            padding: 12px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .pagination-info {
+            color: var(--text-color);
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+
+        .pagination-btn {
+            min-width: 80px;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
         .monster-list {
             display: flex;
             flex-direction: column;
@@ -2002,6 +2027,8 @@
         let selectedMonsterType = null;
         let myMonsters = [];
         let monsterSearchTerm = '';  // Current search term for monster list
+        let monsterListPage = 1;     // Current page for monster list pagination
+        const MONSTERS_PER_PAGE = 5;  // Items per page for pagination
         let activeMonster = null;  // Currently selected/controlled monster
         let availableSkills = [];  // List of all transferable skills
         let selectedSkills = [];   // Currently selected skills for new monster (max 3)
@@ -2185,9 +2212,10 @@
         const monsterSearchInput = document.getElementById('monster-search');
         const headerLogoutBtn = document.getElementById('header-logout-btn');
 
-        // Monster search input handler
+        // Monster search input handler - resets pagination on filter change
         monsterSearchInput.addEventListener('input', (e) => {
             monsterSearchTerm = e.target.value;
+            monsterListPage = 1;  // Reset to page 1 when filter changes
             renderMyMonsters();
         });
 
@@ -2557,7 +2585,7 @@
             }
         }
 
-        // Render player's monsters (with search filtering)
+        // Render player's monsters (with search filtering and pagination)
         function renderMyMonsters() {
             if (myMonsters.length === 0) {
                 monsterList.innerHTML = '<p style="color: var(--text-color); opacity: 0.7;">No monsters yet. Create one above!</p>';
@@ -2583,7 +2611,21 @@
                 return;
             }
 
-            monsterList.innerHTML = filteredMonsters.map(monster => `
+            // Pagination calculations
+            const totalPages = Math.ceil(filteredMonsters.length / MONSTERS_PER_PAGE);
+            // Ensure current page is valid after filter change
+            if (monsterListPage > totalPages) {
+                monsterListPage = totalPages;
+            }
+            if (monsterListPage < 1) {
+                monsterListPage = 1;
+            }
+            const startIndex = (monsterListPage - 1) * MONSTERS_PER_PAGE;
+            const endIndex = startIndex + MONSTERS_PER_PAGE;
+            const paginatedMonsters = filteredMonsters.slice(startIndex, endIndex);
+
+            // Build monster list HTML
+            let html = paginatedMonsters.map(monster => `
                 <div class="owned-monster">
                     <div class="owned-monster-info">
                         <h4>${monster.name}</h4>
@@ -2596,6 +2638,19 @@
                 </div>
             `).join('');
 
+            // Add pagination controls if more than one page
+            if (totalPages > 1) {
+                html += `
+                    <div class="pagination-controls">
+                        <button class="btn btn-small pagination-btn" data-page="prev" ${monsterListPage === 1 ? 'disabled' : ''}>← Prev</button>
+                        <span class="pagination-info">Page ${monsterListPage} of ${totalPages}</span>
+                        <button class="btn btn-small pagination-btn" data-page="next" ${monsterListPage === totalPages ? 'disabled' : ''}>Next →</button>
+                    </div>
+                `;
+            }
+
+            monsterList.innerHTML = html;
+
             // Add click handlers for Select buttons
             document.querySelectorAll('.select-monster-btn').forEach(btn => {
                 btn.addEventListener('click', () => selectMonster(btn.dataset.monsterId));
@@ -2604,6 +2659,20 @@
             // Add click handlers for Delete buttons
             document.querySelectorAll('.delete-monster-btn').forEach(btn => {
                 btn.addEventListener('click', () => deleteMonster(btn.dataset.monsterId, btn.dataset.monsterName));
+            });
+
+            // Add click handlers for pagination buttons
+            document.querySelectorAll('.pagination-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const action = btn.dataset.page;
+                    if (action === 'prev' && monsterListPage > 1) {
+                        monsterListPage--;
+                        renderMyMonsters();
+                    } else if (action === 'next' && monsterListPage < totalPages) {
+                        monsterListPage++;
+                        renderMyMonsters();
+                    }
+                });
             });
         }
 
