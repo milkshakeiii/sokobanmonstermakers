@@ -755,6 +755,63 @@ async def is_position_blocked_by_entity(session, zone_id: str, x: int, y: int,
     return False
 
 
+def get_item_weight(entity: Entity) -> int:
+    """Get the weight of an item entity.
+
+    Weight is determined by:
+    1. Explicit weight in metadata
+    2. storage_volume from good type (if available)
+    3. Default weight of 1
+
+    Wagons have a base weight of 10 but can carry additional items.
+    """
+    metadata = entity.entity_metadata or {}
+
+    # Check for explicit weight in metadata
+    if 'weight' in metadata:
+        return metadata['weight']
+
+    # Wagons have higher base weight
+    if entity.entity_type == "wagon":
+        return 10
+
+    # Default weight for items
+    return 1
+
+
+def get_monster_transport_capacity(monster: Monster) -> int:
+    """Calculate monster's transport capacity based on STR.
+
+    Transport capacity formula:
+    - Base capacity: STR score
+    - Example: Monster with STR 10 can push items up to weight 10
+    - Monster with STR 18 can push items up to weight 18
+
+    Wagons allow transporting items beyond normal capacity when hitched.
+    """
+    # Base capacity from STR (including age bonus already applied)
+    return monster.str_ + monster.age_bonus
+
+
+def can_monster_push_item(monster: Monster, entity: Entity) -> tuple[bool, str]:
+    """Check if a monster can push an item based on weight.
+
+    Args:
+        monster: The monster attempting to push
+        entity: The entity being pushed
+
+    Returns:
+        Tuple of (can_push, reason) where reason explains why if can't push
+    """
+    item_weight = get_item_weight(entity)
+    capacity = get_monster_transport_capacity(monster)
+
+    if item_weight > capacity:
+        return False, f"Item weight ({item_weight}) exceeds transport capacity ({capacity})"
+
+    return True, ""
+
+
 def calculate_skill_decay(monster: Monster) -> dict:
     """Calculate decayed skill values based on time since last use.
 
@@ -1138,6 +1195,12 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 )
 
             if item_at_target:
+                # Check if monster can push this item based on weight
+                can_push, push_reason = can_monster_push_item(monster, item_at_target)
+                if not can_push:
+                    # Item is too heavy for this monster
+                    return MoveResult(monster=monster_to_info(monster))
+
                 # Calculate where the item would be pushed to
                 push_x, push_y = new_x, new_y
                 if request.direction == "up":
@@ -3427,6 +3490,12 @@ async def debug_move_monster(monster_id: str, direction: str):
 
         pushed_item = None
         if item_at_target:
+            # Check if monster can push this item based on weight
+            can_push, push_reason = can_monster_push_item(monster, item_at_target)
+            if not can_push:
+                return {"blocked": True, "reason": "item_too_heavy", "monster_position": {"x": monster.x, "y": monster.y},
+                        "weight_info": {"item_weight": get_item_weight(item_at_target), "capacity": get_monster_transport_capacity(monster)}}
+
             # Calculate push destination
             push_x, push_y = new_x, new_y
             if direction == "up":
