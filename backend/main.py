@@ -24,7 +24,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from models.database import init_db, get_session, async_session
 from models.player import Player, Session, Commune
 from models.monster import Monster, MONSTER_TYPES, TRANSFERABLE_SKILLS
-from models.zone import Zone, Entity, GoodType
+from models.zone import Zone, Entity, GoodType, Share
 
 
 # Password hashing functions using bcrypt directly
@@ -1267,7 +1267,8 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                             'max_durability': item_metadata.get('max_durability', durability),
                             'deposited_at': datetime.utcnow().isoformat(),
                             'slot_x': push_x,
-                            'slot_y': push_y
+                            'slot_y': push_y,
+                            'creator_commune_id': item_metadata.get('producer_commune_id')  # Track tool creator for shares
                         })
                     else:
                         # Deposit as an input ingredient
@@ -1382,18 +1383,72 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                             delivery_name = delivery_metadata.get('name', 'Delivery')
 
                             # Calculate renown based on item quality
-                            renown_gained = item_quality * 10  # 10 renown per quality point
+                            base_renown = item_quality * 10  # 10 renown per quality point
 
-                            # Get the monster's commune and award renown
-                            commune_id = monster.commune_id
-                            if commune_id:
-                                commune_result = await session.execute(
-                                    select(Commune).where(Commune.id == commune_id)
-                                )
-                                commune = commune_result.scalar_one_or_none()
-                                if commune:
-                                    current_renown = int(commune.renown or "0")
-                                    commune.renown = str(current_renown + renown_gained)
+                            # Distribute shares to all contributors
+                            contributors = {}  # commune_id -> {types: [], shares: 0}
+
+                            # Producer gets shares
+                            producer_commune_id = item_metadata.get('producer_commune_id')
+                            if producer_commune_id:
+                                if producer_commune_id not in contributors:
+                                    contributors[producer_commune_id] = {'types': [], 'shares': 0}
+                                contributors[producer_commune_id]['types'].append('producer')
+                                contributors[producer_commune_id]['shares'] += 1
+
+                            # Tool creators get shares
+                            tool_creator_communes = item_metadata.get('tool_creator_commune_ids', [])
+                            for tool_commune_id in tool_creator_communes:
+                                if tool_commune_id:
+                                    if tool_commune_id not in contributors:
+                                        contributors[tool_commune_id] = {'types': [], 'shares': 0}
+                                    if 'tool_creator' not in contributors[tool_commune_id]['types']:
+                                        contributors[tool_commune_id]['types'].append('tool_creator')
+                                    contributors[tool_commune_id]['shares'] += 1
+
+                            # Transporter gets shares (the one who pushed to delivery)
+                            transporter_commune_id = monster.commune_id
+                            if transporter_commune_id:
+                                if transporter_commune_id not in contributors:
+                                    contributors[transporter_commune_id] = {'types': [], 'shares': 0}
+                                contributors[transporter_commune_id]['types'].append('transporter')
+                                contributors[transporter_commune_id]['shares'] += 1
+
+                            # Calculate total shares and distribute renown
+                            total_shares = sum(c['shares'] for c in contributors.values())
+                            total_shares = max(1, total_shares)  # Avoid division by zero
+                            renown_per_share = base_renown / total_shares
+
+                            share_distribution = []
+                            for commune_id, contrib_info in contributors.items():
+                                commune_renown = int(renown_per_share * contrib_info['shares'])
+                                if commune_renown > 0:
+                                    commune_result = await session.execute(
+                                        select(Commune).where(Commune.id == commune_id)
+                                    )
+                                    commune = commune_result.scalar_one_or_none()
+                                    if commune:
+                                        current_renown = int(commune.renown or "0")
+                                        commune.renown = str(current_renown + commune_renown)
+                                        share_distribution.append({
+                                            'commune_id': commune_id,
+                                            'commune_name': commune.name,
+                                            'contribution_types': contrib_info['types'],
+                                            'shares': contrib_info['shares'],
+                                            'renown': commune_renown
+                                        })
+
+                                        # Create Share records for tracking
+                                        for contrib_type in contrib_info['types']:
+                                            share_record = Share(
+                                                entity_id=item_at_target.id,
+                                                commune_id=commune_id,
+                                                share_count=contrib_info['shares'],
+                                                contribution_type=contrib_type
+                                            )
+                                            session.add(share_record)
+
+                            renown_gained = base_renown
 
                             # Delete the item (it's been delivered/scored)
                             await session.delete(item_at_target)
@@ -1401,7 +1456,7 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                             deposit_info = DepositInfo(
                                 workshop_id=target_delivery.id,
                                 workshop_name=delivery_name,
-                                item_name=f"{item_name} (Scored! +{renown_gained} renown)",
+                                item_name=f"{item_name} (Scored! +{renown_gained} renown, {len(contributors)} contributors)",
                                 slot_x=push_x,
                                 slot_y=push_y
                             )
@@ -1433,6 +1488,11 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                             pushed_item_name = item_metadata.get('name', 'Unknown Item')
                             item_at_target.x = push_x
                             item_at_target.y = push_y
+
+                            # Update transporter for share tracking
+                            item_metadata['last_transporter_commune_id'] = monster.commune_id
+                            item_at_target.entity_metadata = item_metadata
+                            flag_modified(item_at_target, 'entity_metadata')
 
                             # If pushing from a dispenser, spawn a new item if it has more
                             if source_dispenser:
@@ -1875,6 +1935,25 @@ async def get_workshop_status(workshop_id: str, token: str):
                     output_x = workshop.x + (workshop.width or 4) - 2
                     output_y = workshop.y + (workshop.height or 4) - 2
 
+                    # Get crafter info for share tracking
+                    crafter_id = workshop_metadata.get('crafter_monster_id')
+                    producer_commune_id = None
+                    if crafter_id:
+                        crafter_result = await session.execute(
+                            select(Monster).where(Monster.id == crafter_id)
+                        )
+                        crafter_monster = crafter_result.scalar_one_or_none()
+                        if crafter_monster:
+                            producer_commune_id = crafter_monster.commune_id
+
+                    # Collect tool creator info for share tracking
+                    tool_items = workshop_metadata.get('tool_items', [])
+                    tool_creators = []
+                    for tool in tool_items:
+                        tool_creator_commune = tool.get('creator_commune_id')
+                        if tool_creator_commune and tool_creator_commune not in tool_creators:
+                            tool_creators.append(tool_creator_commune)
+
                     output_item = Entity(
                         zone_id=workshop.zone_id,
                         entity_type="item",
@@ -1884,13 +1963,15 @@ async def get_workshop_status(workshop_id: str, token: str):
                             'name': recipe.name,
                             'good_type': recipe.name.lower().replace(' ', '_'),
                             'quality': 5,  # TODO: Calculate based on skills
-                            'crafted_at': datetime.utcnow().isoformat()
+                            'crafted_at': datetime.utcnow().isoformat(),
+                            'producer_commune_id': producer_commune_id,  # Who crafted it
+                            'tool_creator_commune_ids': tool_creators,  # Who made the tools
+                            'last_transporter_commune_id': producer_commune_id  # Initially same as producer
                         }
                     )
                     session.add(output_item)
 
                     # Skill learning: improve monster's applied skill
-                    crafter_id = workshop_metadata.get('crafter_monster_id')
                     primary_skill = workshop_metadata.get('primary_applied_skill')
                     if crafter_id and primary_skill:
                         crafter_result = await session.execute(
