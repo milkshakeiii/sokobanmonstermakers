@@ -10,15 +10,12 @@ import sys
 from typing import Optional
 from dataclasses import dataclass
 
-# Note: pyunicodegame and pygame will be imported when available
-# For now, we create a placeholder structure
-
 try:
     import pygame
-    PYGAME_AVAILABLE = True
-except ImportError:
-    PYGAME_AVAILABLE = False
-    print("Warning: pygame not installed. Run: pip install pygame")
+except ImportError as exc:
+    raise SystemExit(
+        "Error: pygame is required to run the client. Install with: pip install pygame"
+    ) from exc
 
 try:
     import websockets
@@ -184,10 +181,6 @@ class Renderer:
 
     def init(self):
         """Initialize pygame and renderer."""
-        if not PYGAME_AVAILABLE:
-            print("Cannot initialize renderer: pygame not installed")
-            return False
-
         pygame.init()
         self.screen = pygame.display.set_mode(
             (self.config.window_width, self.config.window_height)
@@ -316,8 +309,7 @@ class Renderer:
 
     def cleanup(self):
         """Cleanup pygame resources."""
-        if PYGAME_AVAILABLE:
-            pygame.quit()
+        pygame.quit()
 
 
 # =============================================================================
@@ -337,16 +329,13 @@ class InputHandler:
         pygame.K_s: "down",
         pygame.K_a: "left",
         pygame.K_d: "right",
-    } if PYGAME_AVAILABLE else {}
+    }
 
     def __init__(self):
         self.quit_requested = False
 
     def process_events(self) -> list:
         """Process pygame events and return list of intents."""
-        if not PYGAME_AVAILABLE:
-            return []
-
         intents = []
 
         for event in pygame.event.get():
@@ -406,11 +395,6 @@ async def main():
     print("=" * 50)
     print("  Monster Workshop - Client")
     print("=" * 50)
-
-    if not PYGAME_AVAILABLE:
-        print("\nError: pygame is required to run the client.")
-        print("Install with: pip install pygame")
-        return
 
     # Initialize
     config = GameConfig()
