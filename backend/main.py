@@ -1423,8 +1423,11 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                             delivery_metadata = target_delivery.entity_metadata or {}
                             delivery_name = delivery_metadata.get('name', 'Delivery')
 
-                            # Calculate renown based on item quality
+                            # Calculate renown based on item quality and transporter's CHA
                             base_renown = item_quality * 10  # 10 renown per quality point
+                            # CHA bonus: +5% per point above 10
+                            cha_bonus_percent = max(0, monster.cha - 10) * 0.05
+                            base_renown = int(base_renown * (1 + cha_bonus_percent))
 
                             # Distribute shares to all contributors
                             contributors = {}  # commune_id -> {types: [], shares: 0}
@@ -2112,9 +2115,10 @@ async def get_workshop_status(workshop_id: str, token: str):
                     output_x = workshop.x + (workshop.width or 4) - 2
                     output_y = workshop.y + (workshop.height or 4) - 2
 
-                    # Get crafter info for share tracking
+                    # Get crafter info for share tracking and quality calculation
                     crafter_id = workshop_metadata.get('crafter_monster_id')
                     producer_commune_id = None
+                    crafter_monster = None
                     if crafter_id:
                         crafter_result = await session.execute(
                             select(Monster).where(Monster.id == crafter_id)
@@ -2122,6 +2126,15 @@ async def get_workshop_status(workshop_id: str, token: str):
                         crafter_monster = crafter_result.scalar_one_or_none()
                         if crafter_monster:
                             producer_commune_id = crafter_monster.commune_id
+
+                    # Calculate quality based on WIS stat
+                    # Base quality: 50, WIS bonus: +2 per point above 10, cap at 100
+                    base_quality = 50
+                    if crafter_monster:
+                        wis_bonus = max(0, crafter_monster.wis - 10) * 2
+                        calculated_quality = min(100, base_quality + wis_bonus)
+                    else:
+                        calculated_quality = base_quality
 
                     # Collect tool creator info for share tracking
                     tool_items = workshop_metadata.get('tool_items', [])
@@ -2139,7 +2152,7 @@ async def get_workshop_status(workshop_id: str, token: str):
                         entity_metadata={
                             'name': recipe.name,
                             'good_type': recipe.name.lower().replace(' ', '_'),
-                            'quality': 5,  # TODO: Calculate based on skills
+                            'quality': calculated_quality,
                             'crafted_at': datetime.utcnow().isoformat(),
                             'producer_commune_id': producer_commune_id,  # Who crafted it
                             'tool_creator_commune_ids': tool_creators,  # Who made the tools
