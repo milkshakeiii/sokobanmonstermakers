@@ -44,6 +44,8 @@ class Monster(Base):
     current_task = Column(JSON, nullable=True)  # Recording, auto-repeat state
 
     created_at = Column(DateTime, default=datetime.utcnow)  # For aging calculation
+    # Note: last_upkeep_paid is added via migration - don't add as Column here
+    # as it causes issues if the migration hasn't run yet. Use getattr() to access.
 
     # Relationships
     commune = relationship("Commune", back_populates="monsters")

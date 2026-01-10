@@ -2,6 +2,7 @@
 
 A cooperative crafting game with roguelike/ASCII aesthetic.
 Server-authoritative architecture using gridtickmultiplayer patterns.
+Version 0.1.1 - Added monster upkeep system.
 """
 
 import asyncio
@@ -16,7 +17,7 @@ from fastapi.responses import FileResponse
 import os
 from pydantic import BaseModel, Field, field_validator
 import bcrypt
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -742,6 +743,102 @@ def calculate_skill_decay(monster: Monster) -> dict:
             decayed_skills[skill_name] = round(new_level, 3)
 
     return decayed_skills
+
+
+async def calculate_upkeep_due(monster: Monster, session) -> dict:
+    """Calculate if upkeep is due for a monster.
+
+    Upkeep is due every 28 game days.
+    Returns dict with:
+        - upkeep_due: bool - whether upkeep is due
+        - upkeep_cost: int - cost in renown (based on monster type cost)
+        - days_since_payment: float - game days since last upkeep
+        - days_until_due: float - game days until next upkeep (negative if overdue)
+    """
+    now = datetime.utcnow()
+
+    # Read last_upkeep_paid from database via raw SQL (column not in ORM model)
+    result = await session.execute(
+        text("SELECT last_upkeep_paid FROM monsters WHERE id = :monster_id"),
+        {"monster_id": monster.id}
+    )
+    row = result.fetchone()
+    last_paid_str = row[0] if row else None
+
+    # Parse the timestamp or use created_at as fallback
+    if last_paid_str:
+        try:
+            last_paid = datetime.fromisoformat(last_paid_str.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            last_paid = monster.created_at
+    else:
+        last_paid = monster.created_at
+
+    # Calculate game days since last payment
+    real_seconds = (now - last_paid).total_seconds()
+    game_seconds = real_seconds * GAME_TIME_MULTIPLIER
+    game_days = game_seconds / (24 * 60 * 60)
+
+    # Upkeep is due every 28 game days
+    UPKEEP_CYCLE_DAYS = 28
+    days_until_due = UPKEEP_CYCLE_DAYS - game_days
+    upkeep_due = game_days >= UPKEEP_CYCLE_DAYS
+
+    # Upkeep cost is based on monster type creation cost
+    # (could be a fraction of creation cost, using same for simplicity)
+    monster_type_info = MONSTER_TYPES.get(monster.monster_type, {})
+    upkeep_cost = monster_type_info.get("cost", 50)  # Default to 50 if unknown type
+
+    return {
+        "upkeep_due": upkeep_due,
+        "upkeep_cost": upkeep_cost,
+        "days_since_payment": round(game_days, 2),
+        "days_until_due": round(days_until_due, 2),
+        "last_upkeep_paid": last_paid.isoformat() if last_paid != monster.created_at else None
+    }
+
+
+async def process_monster_upkeep(monster: Monster, commune, session) -> dict:
+    """Process upkeep payment for a monster if due.
+
+    Returns dict with:
+        - upkeep_collected: bool
+        - amount: int
+        - new_renown: int
+        - error: str (if insufficient renown)
+    """
+    upkeep_info = await calculate_upkeep_due(monster, session)
+
+    if not upkeep_info["upkeep_due"]:
+        return {"upkeep_collected": False, "reason": "not_due"}
+
+    upkeep_cost = upkeep_info["upkeep_cost"]
+    current_renown = int(commune.renown)
+
+    if current_renown < upkeep_cost:
+        return {
+            "upkeep_collected": False,
+            "reason": "insufficient_renown",
+            "required": upkeep_cost,
+            "available": current_renown
+        }
+
+    # Deduct upkeep from commune renown
+    new_renown = current_renown - upkeep_cost
+    commune.renown = str(new_renown)
+
+    # Update last upkeep paid timestamp using raw SQL (column added via migration)
+    now = datetime.utcnow()
+    await session.execute(
+        text("UPDATE monsters SET last_upkeep_paid = :now WHERE id = :monster_id"),
+        {"now": now.isoformat(), "monster_id": monster.id}
+    )
+
+    return {
+        "upkeep_collected": True,
+        "amount": upkeep_cost,
+        "new_renown": new_renown
+    }
 
 
 def monster_to_info(monster: Monster, apply_skill_decay: bool = True) -> MonsterInfo:
@@ -2931,6 +3028,169 @@ async def debug_advance_skill_time(monster_id: str, days: float = 1.0):
             "decayed_skills": decayed_skills,
             "wis": monster.wis,
             "decay_modifier": 1.0 - (monster.wis - 10) * 0.1
+        }
+
+
+@app.get("/api/debug/monsters/{monster_id}/upkeep-status", tags=["Debug"])
+async def debug_upkeep_status(monster_id: str):
+    """Debug endpoint to check upkeep status for a monster."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        upkeep_info = await calculate_upkeep_due(monster, session)
+
+        return {
+            "monster_id": monster.id,
+            "monster_name": monster.name,
+            "monster_type": monster.monster_type,
+            **upkeep_info
+        }
+
+
+@app.post("/api/debug/monsters/{monster_id}/advance-upkeep-time", tags=["Debug"])
+async def debug_advance_upkeep_time(monster_id: str, days: float = 28.0):
+    """Debug endpoint to simulate upkeep time passage for testing.
+
+    Moves the last_upkeep_paid timestamp back by the specified number of game days.
+    This simulates the passage of time without actually waiting.
+
+    Args:
+        monster_id: The ID of the monster
+        days: Number of game days to simulate (default 28.0 - one full cycle)
+    """
+    from datetime import timedelta
+
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Monster).where(Monster.id == monster_id)
+            )
+            monster = result.scalar_one_or_none()
+
+            if not monster:
+                raise HTTPException(status_code=404, detail="Monster not found")
+
+            # Use created_at as the baseline
+            current_time = monster.created_at
+
+            # Game time: 1 real second = 30 game seconds
+            # So 1 game day = (24 * 60 * 60) / 30 real seconds = 2880 real seconds = 48 minutes
+            real_seconds_per_game_day = (24 * 60 * 60) / GAME_TIME_MULTIPLIER
+            real_seconds_to_subtract = real_seconds_per_game_day * days
+
+            # Move upkeep timestamp back in time
+            new_time = current_time - timedelta(seconds=real_seconds_to_subtract)
+
+            # Use raw SQL to update the column (since it's not in the model)
+            await session.execute(
+                text("UPDATE monsters SET last_upkeep_paid = :new_time WHERE id = :monster_id"),
+                {"new_time": new_time.isoformat(), "monster_id": monster_id}
+            )
+
+            await session.commit()
+
+            # Calculate upkeep status manually based on new_time
+            now = datetime.utcnow()
+            real_seconds_since_payment = (now - new_time).total_seconds()
+            game_seconds_since_payment = real_seconds_since_payment * GAME_TIME_MULTIPLIER
+            game_days_since_payment = game_seconds_since_payment / (24 * 60 * 60)
+            UPKEEP_CYCLE_DAYS = 28
+            days_until_due = UPKEEP_CYCLE_DAYS - game_days_since_payment
+            upkeep_due = game_days_since_payment >= UPKEEP_CYCLE_DAYS
+            monster_type_info = MONSTER_TYPES.get(monster.monster_type, {})
+            upkeep_cost = monster_type_info.get("cost", 50)
+
+            return {
+                "message": f"Advanced upkeep time by {days} game days",
+                "monster_id": monster.id,
+                "monster_name": monster.name,
+                "new_last_upkeep_paid": new_time.isoformat(),
+                "upkeep_due": upkeep_due,
+                "upkeep_cost": upkeep_cost,
+                "days_since_payment": round(game_days_since_payment, 2),
+                "days_until_due": round(days_until_due, 2)
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@app.post("/api/debug/run-migrations", tags=["Debug"])
+async def debug_run_migrations():
+    """Debug endpoint to run database migrations manually."""
+    results = []
+    async with async_session() as session:
+        # Check if last_upkeep_paid column exists
+        try:
+            check_result = await session.execute(
+                text("SELECT last_upkeep_paid FROM monsters LIMIT 1")
+            )
+            results.append("Column last_upkeep_paid exists")
+        except Exception as e:
+            results.append(f"Column check failed: {str(e)}")
+            await session.rollback()
+            # Try to add the column
+            try:
+                await session.execute(
+                    text("ALTER TABLE monsters ADD COLUMN last_upkeep_paid TIMESTAMP")
+                )
+                await session.commit()
+                results.append("Successfully added last_upkeep_paid column")
+            except Exception as add_err:
+                await session.rollback()
+                results.append(f"Failed to add column: {str(add_err)}")
+
+    return {"results": results}
+
+
+@app.post("/api/debug/monsters/{monster_id}/collect-upkeep", tags=["Debug"])
+async def debug_collect_upkeep(monster_id: str):
+    """Debug endpoint to trigger upkeep collection for a monster.
+
+    If upkeep is due, deducts the cost from the commune's renown.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get the commune
+        result = await session.execute(
+            select(Commune).where(Commune.id == monster.commune_id)
+        )
+        commune = result.scalar_one_or_none()
+
+        if not commune:
+            raise HTTPException(status_code=404, detail="Commune not found")
+
+        # Get upkeep info before collection
+        upkeep_before = await calculate_upkeep_due(monster, session)
+        renown_before = int(commune.renown)
+
+        # Process upkeep
+        result = await process_monster_upkeep(monster, commune, session)
+
+        await session.commit()
+
+        return {
+            "monster_id": monster.id,
+            "monster_name": monster.name,
+            "monster_type": monster.monster_type,
+            "renown_before": renown_before,
+            "upkeep_info_before": upkeep_before,
+            "collection_result": result,
+            "renown_after": int(commune.renown)
         }
 
 

@@ -38,11 +38,12 @@ async def init_db():
 
 async def run_migrations():
     """Run database migrations for schema updates."""
+    # Migration 1: Add skill_last_used column to monsters table if it doesn't exist
     async with async_session() as session:
-        # Migration 1: Add skill_last_used column to monsters table if it doesn't exist
         try:
             await session.execute(text("SELECT skill_last_used FROM monsters LIMIT 1"))
         except Exception:
+            await session.rollback()
             # Column doesn't exist, add it
             try:
                 await session.execute(
@@ -51,6 +52,26 @@ async def run_migrations():
                 await session.commit()
                 print("Migration: Added skill_last_used column to monsters table")
             except Exception as e:
+                await session.rollback()
+                print(f"Migration warning: {e}")
+
+    # Migration 2: Add last_upkeep_paid column to monsters table if it doesn't exist
+    async with async_session() as session:
+        try:
+            result = await session.execute(text("SELECT last_upkeep_paid FROM monsters LIMIT 1"))
+            print("Migration: last_upkeep_paid column already exists")
+        except Exception as check_err:
+            print(f"Migration: Column check failed: {check_err}")
+            await session.rollback()
+            # Column doesn't exist, add it with current timestamp as default
+            try:
+                await session.execute(
+                    text("ALTER TABLE monsters ADD COLUMN last_upkeep_paid TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                )
+                await session.commit()
+                print("Migration: Added last_upkeep_paid column to monsters table")
+            except Exception as e:
+                await session.rollback()
                 print(f"Migration warning: {e}")
 
 
