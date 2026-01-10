@@ -433,3 +433,70 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 3. Add crafting progress and completion
 4. Implement skill learning system
 5. Add more visual effects (particles, animations)
+
+---
+
+## Session 8 - Implementation Agent (continued)
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Workshop Input Slot Deposits (Feature 23)**
+   - Added `is_workshop_input_slot()` function to detect interior cells of workshops
+   - Modified move_monster endpoint to return `MoveResult` with deposit info
+   - Created `DepositInfo` and `MoveResult` Pydantic models
+   - When an item is pushed into a workshop interior cell, it gets deposited
+   - Deposited items are stored in workshop metadata `input_items` array
+   - Item entity is deleted after deposit (item is now "in" the workshop)
+   - Added deposit flash effect CSS animation in frontend
+   - Show toast notification "Deposited X into Y!" when item is deposited
+   - Used `flag_modified()` for SQLAlchemy JSON field mutation detection
+
+2. **Bug Fixes**
+   - Fixed uninitialized variables (`pushed_item_name`, `deposit_info`) in move endpoint
+   - Changed all returns in move_monster to use `MoveResult` instead of `MonsterInfo`
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 73
+- In progress: 0
+- Completion: 42.7%
+
+### Features Verified This Session:
+- Feature 23: Push ingredient into workshop input slot
+  - Created item near workshop
+  - Pushed item toward workshop
+  - Pushed item into workshop interior (input slot)
+  - Verified item deposited in workshop metadata
+  - Verified toast notification appeared
+
+### Files Modified This Session:
+- backend/main.py:
+  - Added `from sqlalchemy.orm.attributes import flag_modified` import
+  - Added `DepositInfo` and `MoveResult` Pydantic models
+  - Added `is_workshop_input_slot()` function
+  - Modified move_monster endpoint to detect workshop input slots
+  - Deposit logic: store item in workshop metadata, delete item entity
+  - Changed response_model from `MonsterInfo` to `MoveResult`
+- backend/static/index.html:
+  - Updated moveMonster() to handle MoveResult response
+  - Added `showDepositFlash()` function for visual effect
+  - Added `.deposit-flash` CSS animation (radial gradient flash)
+
+### Technical Notes:
+- Workshop input slots are all interior cells (not edge/wall cells)
+- Workshop edge cells (x=0, x=width-1, y=0, y=height-1 relative to workshop) are walls
+- Interior cells accept item deposits
+- Deposited items stored as: {name, good_type, quality, deposited_at, slot_x, slot_y}
+- MoveResult contains: monster (MonsterInfo), pushed_item (str), deposit (DepositInfo)
+
+### Git Commits:
+- b6df46c: Implement workshop input slot deposits (Feature 23)
+
+### Next Steps for Future Agents:
+1. Implement crafting with deposited ingredients
+2. Add output slot for crafted items
+3. Implement recipe execution (convert inputs to outputs)
+4. Add crafting progress bar
+5. Implement skill learning during crafting

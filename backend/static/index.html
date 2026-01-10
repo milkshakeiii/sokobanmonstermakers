@@ -964,6 +964,82 @@
             }
         }
 
+        /* Crafting progress overlay */
+        .crafting-progress-overlay {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--panel-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            z-index: 1000;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+            min-width: 200px;
+        }
+
+        .crafting-progress-overlay.active {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .crafting-progress-content h4 {
+            margin: 0 0 12px 0;
+            color: var(--text-bright);
+            font-size: 14px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: var(--panel-border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            transition: width 0.3s ease;
+        }
+
+        .crafting-progress-content p {
+            margin: 0;
+            font-size: 12px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        /* Celebration effect */
+        .celebration-effect {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 100px;
+            animation: celebration-animation 2s ease-out forwards;
+            z-index: 2000;
+            pointer-events: none;
+        }
+
+        @keyframes celebration-animation {
+            0% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(0.5);
+            }
+            50% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1.5);
+            }
+            100% {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(2);
+            }
+        }
+
         /* Responsive game screen */
         @media (max-width: 768px) {
             .game-container {
@@ -1951,7 +2027,7 @@
                 // Handle workshop menu
                 else if (result.action === 'workshop_menu') {
                     if (result.recipes && result.recipes.length > 0) {
-                        showRecipePopup(result.entity_name, result.recipes);
+                        showRecipePopup(result.entity_name, result.recipes, result.entity_id);
                     } else {
                         showToast(result.message, 'info');
                     }
@@ -1965,9 +2041,13 @@
             }
         }
 
+        // Track current workshop for recipe selection
+        let currentWorkshopId = null;
+
         // Show recipe selection popup
-        function showRecipePopup(workshopName, recipes) {
+        function showRecipePopup(workshopName, recipes, workshopId) {
             currentRecipes = recipes;
+            currentWorkshopId = workshopId;
             recipePopupOpen = true;
 
             document.getElementById('recipe-popup-title').textContent = workshopName;
@@ -2008,13 +2088,123 @@
         }
 
         // Select a recipe by index
-        function selectRecipe(index) {
-            if (index >= 0 && index < currentRecipes.length) {
+        async function selectRecipe(index) {
+            if (index >= 0 && index < currentRecipes.length && currentWorkshopId) {
                 const recipe = currentRecipes[index];
-                showToast(`Selected: ${recipe.name}`, 'success');
                 hideRecipePopup();
-                // TODO: Start crafting with this recipe
+
+                try {
+                    const result = await apiCall(
+                        `/api/workshops/${currentWorkshopId}/select-recipe?token=${authToken}`,
+                        'POST',
+                        { workshop_id: currentWorkshopId, recipe_id: recipe.id }
+                    );
+
+                    showToast(result.message, result.crafting_status.is_crafting ? 'success' : 'info');
+
+                    // If crafting started, begin polling for progress
+                    if (result.crafting_status.is_crafting) {
+                        startCraftingProgressPoll(currentWorkshopId, result.crafting_status);
+                    }
+
+                    // Reload zone data to reflect any changes
+                    await loadZoneData();
+                    renderViewport();
+                } catch (err) {
+                    showToast(`Failed to select recipe: ${err.message}`, 'error');
+                }
             }
+        }
+
+        // Crafting progress polling
+        let craftingPollInterval = null;
+
+        function startCraftingProgressPoll(workshopId, initialStatus) {
+            // Stop any existing poll
+            if (craftingPollInterval) {
+                clearInterval(craftingPollInterval);
+            }
+
+            // Show initial progress
+            showCraftingProgress(initialStatus);
+
+            // Poll for progress updates
+            craftingPollInterval = setInterval(async () => {
+                try {
+                    const status = await apiCall(
+                        `/api/workshops/${workshopId}/status?token=${authToken}`
+                    );
+
+                    showCraftingProgress(status);
+
+                    // If crafting is complete, stop polling and show celebration
+                    if (!status.is_crafting || status.progress >= 1.0) {
+                        clearInterval(craftingPollInterval);
+                        craftingPollInterval = null;
+
+                        if (status.progress >= 1.0) {
+                            showCraftingComplete(status.recipe_name);
+                            // Reload zone to show output item
+                            await loadZoneData();
+                            renderViewport();
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to get crafting status:', err);
+                }
+            }, 1000); // Poll every second
+        }
+
+        // Show crafting progress indicator
+        function showCraftingProgress(status) {
+            let progressOverlay = document.getElementById('crafting-progress-overlay');
+            if (!progressOverlay) {
+                progressOverlay = document.createElement('div');
+                progressOverlay.id = 'crafting-progress-overlay';
+                progressOverlay.className = 'crafting-progress-overlay';
+                document.body.appendChild(progressOverlay);
+            }
+
+            const progressPercent = Math.round(status.progress * 100);
+            const timeRemaining = status.time_remaining || 0;
+
+            progressOverlay.innerHTML = `
+                <div class="crafting-progress-content">
+                    <h4>Crafting: ${status.recipe_name}</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${progressPercent}%"></div>
+                    </div>
+                    <p>${progressPercent}% - ${timeRemaining}s remaining</p>
+                </div>
+            `;
+            progressOverlay.classList.add('active');
+        }
+
+        // Hide crafting progress
+        function hideCraftingProgress() {
+            const progressOverlay = document.getElementById('crafting-progress-overlay');
+            if (progressOverlay) {
+                progressOverlay.classList.remove('active');
+            }
+        }
+
+        // Show crafting complete celebration
+        function showCraftingComplete(recipeName) {
+            hideCraftingProgress();
+            showToast(`🎉 Crafted ${recipeName}! 🎉`, 'success');
+
+            // Add celebration effect
+            const celebration = document.createElement('div');
+            celebration.className = 'celebration-effect';
+            celebration.innerHTML = '✨';
+            document.body.appendChild(celebration);
+
+            // Remove after animation
+            setTimeout(() => {
+                if (celebration.parentNode) {
+                    celebration.parentNode.removeChild(celebration);
+                }
+            }, 2000);
         }
 
         // Recipe popup close button handler

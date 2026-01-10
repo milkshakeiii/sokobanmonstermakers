@@ -988,6 +988,7 @@ class InteractResponse(BaseModel):
     new_x: Optional[int] = None
     new_y: Optional[int] = None
     entity_type: Optional[str] = None
+    entity_id: Optional[str] = None  # Entity ID (e.g., workshop_id for crafting)
     entity_name: Optional[str] = None
     workshop_type: Optional[str] = None
     recipes: Optional[list[RecipeInfo]] = None
@@ -1129,6 +1130,7 @@ async def interact(request: InteractRequest, token: str):
                 message=f"Select a recipe at {workshop_name}" if recipe_list else f"No recipes available at {workshop_name}",
                 action='workshop_menu',
                 entity_type='workshop',
+                entity_id=interactable.id,  # Workshop ID for crafting API calls
                 entity_name=workshop_name,
                 workshop_type=workshop_type,
                 recipes=recipe_list
@@ -1151,6 +1153,219 @@ async def interact(request: InteractRequest, token: str):
                 entity_type=interactable.entity_type,
                 entity_name=metadata.get('name', interactable.entity_type)
             )
+
+
+# =============================================================================
+# Workshop Crafting Endpoints
+# =============================================================================
+
+class SelectRecipeRequest(BaseModel):
+    workshop_id: str
+    recipe_id: int
+
+
+class CraftingStatus(BaseModel):
+    """Current crafting status of a workshop."""
+    is_crafting: bool
+    recipe_id: Optional[int] = None
+    recipe_name: Optional[str] = None
+    progress: float = 0.0  # 0.0 to 1.0
+    time_remaining: Optional[int] = None  # In game seconds
+    input_items: list = []
+    missing_inputs: list = []
+    missing_tools: list = []
+
+
+class SelectRecipeResponse(BaseModel):
+    message: str
+    crafting_status: CraftingStatus
+
+
+@app.post("/api/workshops/{workshop_id}/select-recipe", response_model=SelectRecipeResponse, tags=["Crafting"])
+async def select_recipe(workshop_id: str, request: SelectRecipeRequest, token: str):
+    """Select a recipe at a workshop and start crafting if ingredients are available."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the workshop
+        result = await session.execute(
+            select(Entity).where(Entity.id == workshop_id, Entity.entity_type == "workshop")
+        )
+        workshop = result.scalar_one_or_none()
+
+        if not workshop:
+            raise HTTPException(status_code=404, detail="Workshop not found")
+
+        # Get the recipe
+        result = await session.execute(
+            select(GoodType).where(GoodType.id == request.recipe_id)
+        )
+        recipe = result.scalar_one_or_none()
+
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+
+        # Verify recipe is for this workshop type
+        workshop_metadata = workshop.entity_metadata or {}
+        workshop_type = workshop_metadata.get('workshop_type', 'general')
+        if recipe.requires_workshop != workshop_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Recipe '{recipe.name}' requires a {recipe.requires_workshop} workshop, not {workshop_type}"
+            )
+
+        # Check what ingredients are in the workshop
+        input_items = workshop_metadata.get('input_items', [])
+
+        # Check required inputs (simplified - just check tags exist in any input)
+        required_tags = recipe.input_goods_tags_required or []
+        missing_inputs = []
+
+        for tag_group in required_tags:
+            # tag_group is a list like ["ore", "iron"] - input needs ALL these tags
+            found = False
+            for item in input_items:
+                item_good_type = item.get('good_type', '')
+                # Simplified matching - for now just check if good_type contains any tag
+                if any(tag.lower() in item_good_type.lower() for tag in tag_group):
+                    found = True
+                    break
+            if not found:
+                missing_inputs.append(tag_group)
+
+        # Check required tools (simplified - tools not yet implemented)
+        required_tools = recipe.tools_required_tags or []
+        missing_tools = list(required_tools)  # For now, all tools are "missing"
+
+        # Update workshop metadata with selected recipe
+        workshop_metadata['selected_recipe_id'] = recipe.id
+        workshop_metadata['selected_recipe_name'] = recipe.name
+
+        # If we have all inputs (and no tools required or tools present), start crafting
+        can_craft = len(missing_inputs) == 0 and len(missing_tools) == 0
+
+        if can_craft:
+            workshop_metadata['is_crafting'] = True
+            workshop_metadata['crafting_started_at'] = datetime.utcnow().isoformat()
+            workshop_metadata['crafting_duration'] = recipe.production_time
+            message = f"Started crafting {recipe.name}!"
+        else:
+            workshop_metadata['is_crafting'] = False
+            workshop_metadata.pop('crafting_started_at', None)
+            if missing_inputs:
+                message = f"Selected {recipe.name}. Missing ingredients: {missing_inputs}"
+            else:
+                message = f"Selected {recipe.name}. Missing tools: {missing_tools}"
+
+        workshop.entity_metadata = workshop_metadata
+        flag_modified(workshop, 'entity_metadata')
+        await session.commit()
+
+        # Calculate progress if crafting
+        progress = 0.0
+        time_remaining = None
+        if workshop_metadata.get('is_crafting'):
+            started_at = datetime.fromisoformat(workshop_metadata['crafting_started_at'])
+            elapsed = (datetime.utcnow() - started_at).total_seconds()
+            duration = workshop_metadata.get('crafting_duration', 60)
+            progress = min(1.0, elapsed / duration)
+            time_remaining = max(0, int(duration - elapsed))
+
+        return SelectRecipeResponse(
+            message=message,
+            crafting_status=CraftingStatus(
+                is_crafting=workshop_metadata.get('is_crafting', False),
+                recipe_id=recipe.id,
+                recipe_name=recipe.name,
+                progress=progress,
+                time_remaining=time_remaining,
+                input_items=input_items,
+                missing_inputs=missing_inputs,
+                missing_tools=missing_tools
+            )
+        )
+
+
+@app.get("/api/workshops/{workshop_id}/status", response_model=CraftingStatus, tags=["Crafting"])
+async def get_workshop_status(workshop_id: str, token: str):
+    """Get the current crafting status of a workshop."""
+    async with async_session() as session:
+        await get_current_player(token, session)
+
+        # Get the workshop
+        result = await session.execute(
+            select(Entity).where(Entity.id == workshop_id, Entity.entity_type == "workshop")
+        )
+        workshop = result.scalar_one_or_none()
+
+        if not workshop:
+            raise HTTPException(status_code=404, detail="Workshop not found")
+
+        workshop_metadata = workshop.entity_metadata or {}
+
+        # Calculate progress if crafting
+        progress = 0.0
+        time_remaining = None
+        recipe_id = workshop_metadata.get('selected_recipe_id')
+        recipe_name = workshop_metadata.get('selected_recipe_name')
+
+        if workshop_metadata.get('is_crafting'):
+            started_at = datetime.fromisoformat(workshop_metadata['crafting_started_at'])
+            elapsed = (datetime.utcnow() - started_at).total_seconds()
+            duration = workshop_metadata.get('crafting_duration', 60)
+            progress = min(1.0, elapsed / duration)
+            time_remaining = max(0, int(duration - elapsed))
+
+            # Check if crafting is complete
+            if progress >= 1.0:
+                # Crafting complete! Create output item
+                result = await session.execute(
+                    select(GoodType).where(GoodType.id == recipe_id)
+                )
+                recipe = result.scalar_one_or_none()
+
+                if recipe:
+                    # Create output item at workshop output position
+                    output_x = workshop.x + (workshop.width or 4) - 2
+                    output_y = workshop.y + (workshop.height or 4) - 2
+
+                    output_item = Entity(
+                        zone_id=workshop.zone_id,
+                        entity_type="item",
+                        x=output_x,
+                        y=output_y,
+                        entity_metadata={
+                            'name': recipe.name,
+                            'good_type': recipe.name.lower().replace(' ', '_'),
+                            'quality': 5,  # TODO: Calculate based on skills
+                            'crafted_at': datetime.utcnow().isoformat()
+                        }
+                    )
+                    session.add(output_item)
+
+                    # Clear crafting state and consumed inputs
+                    workshop_metadata['is_crafting'] = False
+                    workshop_metadata['crafting_completed_at'] = datetime.utcnow().isoformat()
+                    workshop_metadata['input_items'] = []  # Clear consumed ingredients
+                    workshop_metadata.pop('crafting_started_at', None)
+                    workshop.entity_metadata = workshop_metadata
+                    flag_modified(workshop, 'entity_metadata')
+
+                    await session.commit()
+
+                    progress = 1.0
+                    time_remaining = 0
+
+        return CraftingStatus(
+            is_crafting=workshop_metadata.get('is_crafting', False),
+            recipe_id=recipe_id,
+            recipe_name=recipe_name,
+            progress=progress,
+            time_remaining=time_remaining,
+            input_items=workshop_metadata.get('input_items', []),
+            missing_inputs=[],
+            missing_tools=[]
+        )
 
 
 @app.post("/api/monsters/switch", response_model=MonsterInfo, tags=["Monsters"])
