@@ -673,3 +673,74 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 2. Consider implementing remaining game world features
 3. Test with high-INT monster (Elf) to verify INT bonus in practice
 4. Implement more crafting recipes and workshops
+
+---
+
+## Session 11 - Implementation Agent (continued)
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Skill Forgetting Over Time (Feature 32)**
+   - Added `skill_last_used` column to Monster model (JSON field tracking last use timestamps)
+   - Created `calculate_skill_decay()` function with WIS modifier
+   - Decay formula: 0.1% per game day, modified by WIS
+   - WIS modifier: 1.0 - (WIS - 10) * 0.1, clamped between 0.1 and 2.0
+     - WIS 10: 1.0x decay (baseline)
+     - WIS 18: 0.2x decay (80% reduction)
+     - WIS 8: 1.2x decay (20% faster)
+   - Added `monster_to_info()` helper that applies skill decay on-the-fly
+   - Updated `switch_monster` endpoint to use `monster_to_info()` for decay display
+   - Added `/api/debug/monsters/{id}/advance-skill-time` endpoint for testing
+   - Added database migration in database.py to add skill_last_used column
+
+2. **Verification Testing:**
+   - Created monster with Smithing skill (1%)
+   - Used debug endpoint to advance skill time by 10 game days
+   - Verified skill decayed from 1% to 0% (expected with WIS 8 = 1.2x decay)
+   - Confirmed decay is shown correctly in UI after refresh
+   - WIS modifier of 1.2 confirmed (monster has WIS 8)
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 80
+- In progress: 0
+- Completion: 46.8%
+
+### Features Verified This Session:
+- Feature 32: Skill forgetting over time
+  - ✓ Monster has learned skill (Smithing 1%)
+  - ✓ Advanced game time without using skill (10 game days)
+  - ✓ Skill value decreased (1% → 0%)
+  - ✓ Decay rate affected by WIS stat (1.2x for WIS 8)
+  - ✓ Higher WIS slows decay (formula verified)
+
+### Files Modified This Session:
+- backend/models/monster.py:
+  - Added `skill_last_used` column (JSON field for timestamp tracking)
+
+- backend/models/database.py:
+  - Added `run_migrations()` function for schema updates
+  - Added migration to add skill_last_used column
+
+- backend/main.py:
+  - Added `calculate_skill_decay()` function
+  - Updated `monster_to_info()` to apply skill decay
+  - Updated `switch_monster` to use `monster_to_info()`
+  - Added `/api/debug/monsters/{id}/advance-skill-time` endpoint
+  - Modified skill learning to track `skill_last_used` timestamps
+
+### Technical Notes:
+- Game time: 1 real second = 30 game seconds
+- 1 game day = 2880 real seconds (48 minutes)
+- Base decay rate: 0.001 per game day (0.1%)
+- Skill decay calculated on-the-fly when fetching monster data
+- skill_last_used stores ISO timestamps for each skill
+- Debug endpoint can initialize skill_last_used from applied_skills if missing
+
+### Next Steps for Future Agents:
+1. Get next pending feature from feature_get_next
+2. Consider implementing more game world features
+3. Test skill decay with high-WIS monster (Elf has WIS 12)
+4. Implement remaining crafting and economy features

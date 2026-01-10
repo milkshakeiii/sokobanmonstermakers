@@ -35,6 +35,7 @@ class Monster(Base):
     transferable_skills = Column(JSON, default=list)  # Array of 3 skill names
     applied_skills = Column(JSON, default=dict)  # skill_name -> value (0-1)
     specific_skills = Column(JSON, default=dict)  # good_type -> value (0-1)
+    skill_last_used = Column(JSON, default=dict)  # skill_name -> ISO timestamp of last use
 
     # Position and state
     current_zone_id = Column(String(36), ForeignKey("zones.id"), nullable=True)

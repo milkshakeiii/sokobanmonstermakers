@@ -538,27 +538,8 @@ async def get_player_monsters(token: str):
         )
         monsters = result.scalars().all()
 
-        return [
-            MonsterInfo(
-                id=m.id,
-                name=m.name,
-                monster_type=m.monster_type,
-                str_=m.str_,
-                dex=m.dex,
-                con=m.con,
-                int_=m.int_,
-                wis=m.wis,
-                cha=m.cha,
-                body_fitting_used=m.body_fitting_used,
-                mind_fitting_used=m.mind_fitting_used,
-                current_zone_id=m.current_zone_id,
-                x=m.x,
-                y=m.y,
-                transferable_skills=m.transferable_skills or [],
-                applied_skills=m.applied_skills or {}
-            )
-            for m in monsters
-        ]
+        # Return monsters with skill decay applied
+        return [monster_to_info(m) for m in monsters]
 
 
 @app.post("/api/monsters", response_model=MonsterInfo, tags=["Monsters"])
@@ -698,8 +679,83 @@ def is_terrain_blocked(terrain_data: dict, x: int, y: int) -> bool:
     return False
 
 
-def monster_to_info(monster: Monster) -> MonsterInfo:
-    """Convert a Monster ORM object to a MonsterInfo Pydantic model."""
+def calculate_skill_decay(monster: Monster) -> dict:
+    """Calculate decayed skill values based on time since last use.
+
+    Skill decay formula:
+    - Base decay rate: 0.001 per game day (0.1% per day)
+    - WIS reduces decay: decay_reduction = (WIS - 10) * 0.1 (percentage reduction)
+    - Monster with WIS 10: no reduction
+    - Monster with WIS 18: 80% reduction (only 20% of normal decay)
+    - Monster with WIS 8: 20% increase (120% of normal decay)
+    - Skills can't decay below 0
+
+    Game time: 1 real second = 30 game seconds
+    """
+    applied_skills = monster.applied_skills or {}
+    skill_last_used = monster.skill_last_used or {}
+
+    if not applied_skills:
+        return {}
+
+    decayed_skills = {}
+    now = datetime.utcnow()
+
+    # Calculate WIS-based decay modifier
+    # WIS 10 = 1.0x decay, WIS 18 = 0.2x decay, WIS 8 = 1.2x decay
+    wis_modifier = 1.0 - (monster.wis - 10) * 0.1
+    wis_modifier = max(0.1, min(2.0, wis_modifier))  # Clamp between 0.1 and 2.0
+
+    # Base decay rate per game day
+    base_decay_per_game_day = 0.001  # 0.1% per game day
+
+    # Game time multiplier (1 real second = 30 game seconds)
+    game_time_multiplier = GAME_TIME_MULTIPLIER
+
+    for skill_name, skill_level in applied_skills.items():
+        last_used_str = skill_last_used.get(skill_name)
+
+        if last_used_str:
+            try:
+                last_used = datetime.fromisoformat(last_used_str)
+                real_seconds_since_use = (now - last_used).total_seconds()
+
+                # Convert to game days
+                game_seconds_since_use = real_seconds_since_use * game_time_multiplier
+                game_days_since_use = game_seconds_since_use / (24 * 60 * 60)
+
+                # Calculate decay
+                decay_amount = base_decay_per_game_day * game_days_since_use * wis_modifier
+                new_level = max(0, skill_level - decay_amount)
+                decayed_skills[skill_name] = round(new_level, 3)
+            except (ValueError, TypeError):
+                # If timestamp is invalid, use current skill level
+                decayed_skills[skill_name] = skill_level
+        else:
+            # If never used (shouldn't happen), decay from monster creation time
+            real_seconds_since_creation = (now - monster.created_at).total_seconds()
+            game_seconds_since_creation = real_seconds_since_creation * game_time_multiplier
+            game_days_since_creation = game_seconds_since_creation / (24 * 60 * 60)
+
+            decay_amount = base_decay_per_game_day * game_days_since_creation * wis_modifier
+            new_level = max(0, skill_level - decay_amount)
+            decayed_skills[skill_name] = round(new_level, 3)
+
+    return decayed_skills
+
+
+def monster_to_info(monster: Monster, apply_skill_decay: bool = True) -> MonsterInfo:
+    """Convert a Monster ORM object to a MonsterInfo Pydantic model.
+
+    Args:
+        monster: The Monster ORM object
+        apply_skill_decay: If True, calculate current skill levels with decay applied
+    """
+    applied_skills = monster.applied_skills or {}
+
+    if apply_skill_decay and applied_skills:
+        applied_skills = calculate_skill_decay(monster)
+
     return MonsterInfo(
         id=monster.id,
         name=monster.name,
@@ -716,7 +772,7 @@ def monster_to_info(monster: Monster) -> MonsterInfo:
         x=monster.x,
         y=monster.y,
         transferable_skills=monster.transferable_skills or [],
-        applied_skills=monster.applied_skills or {}
+        applied_skills=applied_skills
     )
 
 
@@ -1620,6 +1676,12 @@ async def get_workshop_status(workshop_id: str, token: str):
                             crafter.applied_skills = applied_skills
                             flag_modified(crafter, 'applied_skills')
 
+                            # Track when this skill was last used (for decay calculation)
+                            skill_last_used = crafter.skill_last_used or {}
+                            skill_last_used[primary_skill] = datetime.utcnow().isoformat()
+                            crafter.skill_last_used = skill_last_used
+                            flag_modified(crafter, 'skill_last_used')
+
                             # Store skill gain info for feedback
                             workshop_metadata['last_skill_gained'] = {
                                 'skill': primary_skill,
@@ -1724,24 +1786,7 @@ async def switch_monster(request: SwitchMonsterRequest, token: str):
         # TODO: Update active monster tracking
         # For now, just return the monster info to confirm the switch
 
-        return MonsterInfo(
-            id=monster.id,
-            name=monster.name,
-            monster_type=monster.monster_type,
-            str_=monster.str_,
-            dex=monster.dex,
-            con=monster.con,
-            int_=monster.int_,
-            wis=monster.wis,
-            cha=monster.cha,
-            body_fitting_used=monster.body_fitting_used,
-            mind_fitting_used=monster.mind_fitting_used,
-            current_zone_id=monster.current_zone_id,
-            x=monster.x,
-            y=monster.y,
-            transferable_skills=monster.transferable_skills or [],
-            applied_skills=monster.applied_skills or {}
-        )
+        return monster_to_info(monster)
 
 
 # =============================================================================
@@ -2820,6 +2865,73 @@ async def debug_complete_crafting(workshop_id: str):
         await session.commit()
 
         return {"message": "Crafting time accelerated. Poll status to complete."}
+
+
+@app.post("/api/debug/monsters/{monster_id}/advance-skill-time", tags=["Debug"])
+async def debug_advance_skill_time(monster_id: str, days: float = 1.0):
+    """Debug endpoint to simulate skill time passage for testing decay.
+
+    Moves the skill_last_used timestamps back by the specified number of game days.
+    This simulates the passage of time without actually waiting.
+
+    Args:
+        monster_id: The ID of the monster
+        days: Number of game days to simulate (default 1.0)
+    """
+    from datetime import timedelta
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        skill_last_used = monster.skill_last_used or {}
+        applied_skills = monster.applied_skills or {}
+
+        # If no skill_last_used but has applied_skills, initialize timestamps to now
+        if not skill_last_used and applied_skills:
+            now = datetime.utcnow()
+            skill_last_used = {skill: now.isoformat() for skill in applied_skills.keys()}
+            monster.skill_last_used = skill_last_used
+            flag_modified(monster, 'skill_last_used')
+        elif not skill_last_used:
+            return {"message": "Monster has no skills"}
+
+        # Game time: 1 real second = 30 game seconds
+        # So 1 game day = (24 * 60 * 60) / 30 real seconds = 2880 real seconds = 48 minutes
+        real_seconds_per_game_day = (24 * 60 * 60) / GAME_TIME_MULTIPLIER
+        real_seconds_to_subtract = real_seconds_per_game_day * days
+
+        # Move all skill timestamps back in time
+        updated_skills = {}
+        for skill_name, timestamp_str in skill_last_used.items():
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str)
+                new_timestamp = timestamp - timedelta(seconds=real_seconds_to_subtract)
+                updated_skills[skill_name] = new_timestamp.isoformat()
+            except (ValueError, TypeError):
+                updated_skills[skill_name] = timestamp_str
+
+        monster.skill_last_used = updated_skills
+        flag_modified(monster, 'skill_last_used')
+
+        # Calculate what the skills will be after decay
+        original_skills = monster.applied_skills or {}
+        decayed_skills = calculate_skill_decay(monster)
+
+        await session.commit()
+
+        return {
+            "message": f"Advanced skill time by {days} game days",
+            "original_skills": original_skills,
+            "decayed_skills": decayed_skills,
+            "wis": monster.wis,
+            "decay_modifier": 1.0 - (monster.wis - 10) * 0.1
+        }
 
 
 # =============================================================================
