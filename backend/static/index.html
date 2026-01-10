@@ -2658,6 +2658,13 @@
 
         // Back to monster selection from game screen
         document.getElementById('back-to-monsters-btn').addEventListener('click', () => {
+            if (isRecording) {
+                if (!confirm('You have an active recording that will be lost. Are you sure you want to change monsters?')) {
+                    return;  // User cancelled
+                }
+                // Stop recording before switching
+                stopRecording();
+            }
             showMonsterScreen();
         });
 
@@ -2751,6 +2758,15 @@
             if (direction) {
                 e.preventDefault();
                 await moveMonster(direction);
+            }
+        });
+
+        // Warn about unsaved recording when navigating away
+        window.addEventListener('beforeunload', (e) => {
+            if (isRecording) {
+                e.preventDefault();
+                e.returnValue = 'You have an active recording. Are you sure you want to leave?';
+                return e.returnValue;
             }
         });
 
