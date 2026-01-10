@@ -1236,11 +1236,24 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 )
 
             if item_at_target:
+                # Check if item is being actively pushed by another player
+                item_metadata = item_at_target.entity_metadata or {}
+                being_pushed_by = item_metadata.get('being_pushed_by')
+                if being_pushed_by and being_pushed_by != str(monster.id):
+                    # Item is being pushed by another player - reject this push
+                    return MoveResult(monster=monster_to_info(monster))
+
                 # Check if monster can push this item based on weight
                 can_push, push_reason = can_monster_push_item(monster, item_at_target)
                 if not can_push:
                     # Item is too heavy for this monster
                     return MoveResult(monster=monster_to_info(monster))
+
+                # Mark item as being pushed by this monster (active-push protection)
+                item_push_metadata = item_at_target.entity_metadata or {}
+                item_push_metadata['being_pushed_by'] = str(monster.id)
+                item_at_target.entity_metadata = item_push_metadata
+                flag_modified(item_at_target, 'entity_metadata')
 
                 # Calculate where the item would be pushed to
                 push_x, push_y = new_x, new_y
@@ -1256,11 +1269,18 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 # Check if push destination is valid
                 # 1. Not out of bounds
                 if push_x < 0 or push_y < 0 or push_x >= zone_width or push_y >= zone_height:
-                    # Can't push item outside zone
+                    # Can't push item outside zone - clear push protection
+                    item_push_metadata.pop('being_pushed_by', None)
+                    item_at_target.entity_metadata = item_push_metadata
+                    flag_modified(item_at_target, 'entity_metadata')
                     return MoveResult(monster=monster_to_info(monster))
 
                 # 2. Not blocked terrain
                 if is_terrain_blocked(terrain_data, push_x, push_y):
+                    # Can't push into blocked terrain - clear push protection
+                    item_push_metadata.pop('being_pushed_by', None)
+                    item_at_target.entity_metadata = item_push_metadata
+                    flag_modified(item_at_target, 'entity_metadata')
                     return MoveResult(monster=monster_to_info(monster))
 
                 # 3. Check if push destination is a workshop input slot
@@ -1512,7 +1532,10 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                                 exclude_entity_id=item_at_target.id  # Don't count the item being pushed
                             )
                             if is_blocked:
-                                # Can't push into another item or wagon
+                                # Can't push into another item or wagon - clear push protection
+                                item_push_metadata.pop('being_pushed_by', None)
+                                item_at_target.entity_metadata = item_push_metadata
+                                flag_modified(item_at_target, 'entity_metadata')
                                 return MoveResult(monster=monster_to_info(monster))
 
                             # Check if item was ON a dispenser (pushing FROM dispenser)
@@ -1533,8 +1556,9 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                             item_at_target.x = push_x
                             item_at_target.y = push_y
 
-                            # Update transporter for share tracking
+                            # Update transporter for share tracking and clear push protection
                             item_metadata['last_transporter_commune_id'] = monster.commune_id
+                            item_metadata.pop('being_pushed_by', None)  # Clear active-push protection
                             item_at_target.entity_metadata = item_metadata
                             flag_modified(item_at_target, 'entity_metadata')
 
@@ -1565,11 +1589,24 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                                     session.add(new_item)
 
         # Update position
+        old_x, old_y = monster.x, monster.y
         monster.x = new_x
         monster.y = new_y
 
-        # Record the action if recording is active
+        # Move hitched wagon if any (wagon follows the monster)
         current_task = monster.current_task or {}
+        hitched_wagon_id = current_task.get('hitched_wagon_id')
+        if hitched_wagon_id:
+            result = await session.execute(
+                select(Entity).where(Entity.id == hitched_wagon_id)
+            )
+            wagon = result.scalar_one_or_none()
+            if wagon:
+                # Wagon moves to where the monster was (follows behind)
+                wagon.x = old_x
+                wagon.y = old_y
+
+        # Record the action if recording is active
         if current_task.get('is_recording'):
             action_type = "push" if pushed_item_name else "move"
             if deposit_info:
@@ -2301,6 +2338,231 @@ async def switch_monster(request: SwitchMonsterRequest, token: str):
 
 
 # =============================================================================
+# Wagon Hitching Endpoints
+# =============================================================================
+
+
+class HitchWagonRequest(BaseModel):
+    monster_id: str
+
+
+class HitchWagonResponse(BaseModel):
+    message: str
+    hitched: bool
+    wagon_id: Optional[str] = None
+    wagon_position: Optional[dict] = None
+
+
+@app.post("/api/monsters/hitch-wagon", response_model=HitchWagonResponse, tags=["Wagons"])
+async def hitch_wagon(request: HitchWagonRequest, token: str):
+    """Hitch a monster to an adjacent wagon for pulling."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune for ownership check
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        # Check if already hitched
+        current_task = monster.current_task or {}
+        if current_task.get('hitched_wagon_id'):
+            return HitchWagonResponse(
+                message="Monster is already hitched to a wagon",
+                hitched=True,
+                wagon_id=current_task.get('hitched_wagon_id')
+            )
+
+        # Find adjacent wagons
+        adjacent_positions = [
+            (monster.x - 1, monster.y),  # left
+            (monster.x + 1, monster.y),  # right
+            (monster.x, monster.y - 1),  # up
+            (monster.x, monster.y + 1),  # down
+        ]
+
+        result = await session.execute(
+            select(Entity).where(
+                Entity.zone_id == monster.current_zone_id,
+                Entity.entity_type == "wagon"
+            )
+        )
+        wagons = result.scalars().all()
+
+        adjacent_wagon = None
+        for wagon in wagons:
+            wagon_width = wagon.width or 2
+            wagon_height = wagon.height or 2
+
+            for pos in adjacent_positions:
+                # Check if position is adjacent to any part of the wagon
+                if (wagon.x <= pos[0] < wagon.x + wagon_width and
+                    wagon.y <= pos[1] < wagon.y + wagon_height):
+                    adjacent_wagon = wagon
+                    break
+            if adjacent_wagon:
+                break
+
+        if not adjacent_wagon:
+            return HitchWagonResponse(
+                message="No wagon adjacent to monster",
+                hitched=False
+            )
+
+        # Check if wagon is already hitched by another monster
+        wagon_metadata = adjacent_wagon.entity_metadata or {}
+        if wagon_metadata.get('hitched_by') and wagon_metadata.get('hitched_by') != str(monster.id):
+            return HitchWagonResponse(
+                message="This wagon is already hitched by another monster",
+                hitched=False
+            )
+
+        # Hitch the wagon
+        current_task['hitched_wagon_id'] = str(adjacent_wagon.id)
+        monster.current_task = current_task
+        flag_modified(monster, 'current_task')
+
+        # Mark wagon as hitched
+        wagon_metadata['hitched_by'] = str(monster.id)
+        adjacent_wagon.entity_metadata = wagon_metadata
+        flag_modified(adjacent_wagon, 'entity_metadata')
+
+        await session.commit()
+
+        return HitchWagonResponse(
+            message=f"Hitched to wagon at ({adjacent_wagon.x}, {adjacent_wagon.y})",
+            hitched=True,
+            wagon_id=str(adjacent_wagon.id),
+            wagon_position={"x": adjacent_wagon.x, "y": adjacent_wagon.y}
+        )
+
+
+@app.post("/api/monsters/unhitch-wagon", response_model=HitchWagonResponse, tags=["Wagons"])
+async def unhitch_wagon(request: HitchWagonRequest, token: str):
+    """Unhitch a monster from its current wagon."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == request.monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Get player's commune for ownership check
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        # Security check: Verify ownership
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only control monsters belonging to your commune"
+            )
+
+        # Check if hitched
+        current_task = monster.current_task or {}
+        hitched_wagon_id = current_task.get('hitched_wagon_id')
+
+        if not hitched_wagon_id:
+            return HitchWagonResponse(
+                message="Monster is not hitched to any wagon",
+                hitched=False
+            )
+
+        # Get the wagon to clear its hitched_by flag
+        result = await session.execute(
+            select(Entity).where(Entity.id == hitched_wagon_id)
+        )
+        wagon = result.scalar_one_or_none()
+
+        if wagon:
+            wagon_metadata = wagon.entity_metadata or {}
+            wagon_metadata.pop('hitched_by', None)
+            wagon.entity_metadata = wagon_metadata
+            flag_modified(wagon, 'entity_metadata')
+
+        # Unhitch
+        current_task.pop('hitched_wagon_id', None)
+        monster.current_task = current_task
+        flag_modified(monster, 'current_task')
+
+        await session.commit()
+
+        return HitchWagonResponse(
+            message="Unhitched from wagon",
+            hitched=False
+        )
+
+
+@app.get("/api/monsters/{monster_id}/hitch-status", response_model=HitchWagonResponse, tags=["Wagons"])
+async def get_hitch_status(monster_id: str, token: str):
+    """Get the current hitch status of a monster."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        current_task = monster.current_task or {}
+        hitched_wagon_id = current_task.get('hitched_wagon_id')
+
+        if not hitched_wagon_id:
+            return HitchWagonResponse(
+                message="Monster is not hitched to any wagon",
+                hitched=False
+            )
+
+        # Get wagon position
+        result = await session.execute(
+            select(Entity).where(Entity.id == hitched_wagon_id)
+        )
+        wagon = result.scalar_one_or_none()
+
+        if wagon:
+            return HitchWagonResponse(
+                message=f"Hitched to wagon at ({wagon.x}, {wagon.y})",
+                hitched=True,
+                wagon_id=hitched_wagon_id,
+                wagon_position={"x": wagon.x, "y": wagon.y}
+            )
+        else:
+            # Wagon was deleted, clear hitch
+            return HitchWagonResponse(
+                message="Wagon no longer exists",
+                hitched=False
+            )
+
+
+# =============================================================================
 # Recording System Endpoints
 # =============================================================================
 
@@ -2881,6 +3143,65 @@ async def create_item(request: CreateItemRequest):
         await session.refresh(item)
 
         return {"message": "Item created", "id": item.id, "x": item.x, "y": item.y, "name": request.name}
+
+
+class SetActivePushRequest(BaseModel):
+    item_id: str
+    monster_id: Optional[str] = None  # None means clear the flag
+
+
+@app.post("/api/debug/item/set-active-push", tags=["Debug"])
+async def set_active_push(request: SetActivePushRequest):
+    """Set or clear the being_pushed_by flag on an item (for testing active-push protection)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Entity).where(Entity.id == request.item_id)
+        )
+        item = result.scalar_one_or_none()
+
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+
+        item_metadata = item.entity_metadata or {}
+
+        if request.monster_id:
+            # Set the flag
+            item_metadata['being_pushed_by'] = request.monster_id
+        else:
+            # Clear the flag
+            item_metadata.pop('being_pushed_by', None)
+
+        item.entity_metadata = item_metadata
+        flag_modified(item, 'entity_metadata')
+        await session.commit()
+
+        return {
+            "message": "Active push flag updated",
+            "item_id": item.id,
+            "being_pushed_by": item_metadata.get('being_pushed_by')
+        }
+
+
+@app.get("/api/debug/item/{item_id}/push-status", tags=["Debug"])
+async def get_item_push_status(item_id: str):
+    """Check the being_pushed_by status of an item."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Entity).where(Entity.id == item_id)
+        )
+        item = result.scalar_one_or_none()
+
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+
+        item_metadata = item.entity_metadata or {}
+
+        return {
+            "item_id": item.id,
+            "item_name": item_metadata.get('name', 'Unknown'),
+            "being_pushed_by": item_metadata.get('being_pushed_by'),
+            "position": {"x": item.x, "y": item.y}
+        }
 
 
 class CreateSignpostRequest(BaseModel):
@@ -3938,11 +4259,23 @@ async def debug_move_monster(monster_id: str, direction: str):
 
         pushed_item = None
         if item_at_target:
+            # Check if item is being actively pushed by another player
+            item_metadata = item_at_target.entity_metadata or {}
+            being_pushed_by = item_metadata.get('being_pushed_by')
+            if being_pushed_by and being_pushed_by != str(monster.id):
+                # Item is being pushed by another player - reject this push
+                return {"blocked": True, "reason": "being_pushed_by_other", "monster_position": {"x": monster.x, "y": monster.y}}
+
             # Check if monster can push this item based on weight
             can_push, push_reason = can_monster_push_item(monster, item_at_target)
             if not can_push:
                 return {"blocked": True, "reason": "item_too_heavy", "monster_position": {"x": monster.x, "y": monster.y},
                         "weight_info": {"item_weight": get_item_weight(item_at_target), "capacity": get_monster_transport_capacity(monster)}}
+
+            # Mark item as being pushed (active-push protection)
+            item_metadata['being_pushed_by'] = str(monster.id)
+            item_at_target.entity_metadata = item_metadata
+            flag_modified(item_at_target, 'entity_metadata')
 
             # Calculate push destination
             push_x, push_y = new_x, new_y
@@ -3957,9 +4290,17 @@ async def debug_move_monster(monster_id: str, direction: str):
 
             # Check if push destination is blocked
             if push_x < 0 or push_y < 0 or push_x >= zone_width or push_y >= zone_height:
+                # Clear push protection on failure
+                item_metadata.pop('being_pushed_by', None)
+                item_at_target.entity_metadata = item_metadata
+                flag_modified(item_at_target, 'entity_metadata')
                 return {"blocked": True, "reason": "push_out_of_bounds", "monster_position": {"x": monster.x, "y": monster.y}}
 
             if is_terrain_blocked(terrain_data, push_x, push_y):
+                # Clear push protection on failure
+                item_metadata.pop('being_pushed_by', None)
+                item_at_target.entity_metadata = item_metadata
+                flag_modified(item_at_target, 'entity_metadata')
                 return {"blocked": True, "reason": "push_terrain", "monster_position": {"x": monster.x, "y": monster.y}}
 
             # Check if push destination is blocked by another entity (multi-cell aware)
@@ -3969,11 +4310,18 @@ async def debug_move_monster(monster_id: str, direction: str):
                 exclude_entity_id=item_at_target.id
             )
             if is_blocked:
+                # Clear push protection on failure
+                item_metadata.pop('being_pushed_by', None)
+                item_at_target.entity_metadata = item_metadata
+                flag_modified(item_at_target, 'entity_metadata')
                 return {"blocked": True, "reason": "push_blocked_by_entity", "monster_position": {"x": monster.x, "y": monster.y}}
 
-            # Move the item
+            # Move the item and clear push protection
             item_at_target.x = push_x
             item_at_target.y = push_y
+            item_metadata.pop('being_pushed_by', None)  # Clear active-push protection
+            item_at_target.entity_metadata = item_metadata
+            flag_modified(item_at_target, 'entity_metadata')
             pushed_item = {
                 "id": item_at_target.id,
                 "type": item_at_target.entity_type,

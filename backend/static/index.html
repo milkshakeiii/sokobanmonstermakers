@@ -1073,6 +1073,54 @@
             50% { background-color: rgba(100, 255, 100, 0.25); }
         }
 
+        /* Hitch indicator (wagon hitched) */
+        .hitch-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background-color: rgba(255, 215, 0, 0.2);
+            border: 1px solid #daa520;
+            border-radius: 4px;
+            animation: hitch-pulse 2s infinite;
+        }
+
+        .hitch-indicator.hidden {
+            display: none;
+        }
+
+        .hitch-icon {
+            font-size: 0.9rem;
+        }
+
+        .hitch-text {
+            color: #daa520;
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+
+        @keyframes hitch-pulse {
+            0%, 100% { background-color: rgba(255, 215, 0, 0.1); }
+            50% { background-color: rgba(255, 215, 0, 0.25); }
+        }
+
+        .btn-info {
+            background-color: #17a2b8;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background-color: #138496;
+        }
+
+        .btn-info.hitched {
+            background-color: #daa520;
+        }
+
+        .btn-info.hitched:hover {
+            background-color: #b8860b;
+        }
+
         .hidden {
             display: none !important;
         }
@@ -1861,8 +1909,13 @@
                             <span class="autorepeat-text">PLAY</span>
                             <span class="autorepeat-progress" id="autorepeat-progress">0/0</span>
                         </div>
+                        <div id="hitch-indicator" class="hitch-indicator hidden">
+                            <span class="hitch-icon">🔗</span>
+                            <span class="hitch-text">HITCHED</span>
+                        </div>
                         <button class="btn btn-warning btn-small" id="record-btn" title="Start Recording (R)">Record</button>
                         <button class="btn btn-success btn-small hidden" id="play-btn" title="Start Autorepeat (P)">Play</button>
+                        <button class="btn btn-info btn-small" id="hitch-btn" title="Hitch/Unhitch Wagon (H)">Hitch</button>
                         <button class="btn btn-secondary btn-small" id="back-to-monsters-btn">Change Monster</button>
                     </div>
                 </div>
@@ -1903,6 +1956,8 @@
         let autorepeatState = null;  // Current autorepeat state
         let autorepeatInterval = null;  // Interval for autorepeat playback
         let isCraftingInProgress = false;  // Is crafting currently in progress
+        let isHitched = false;     // Is monster hitched to a wagon
+        let hitchedWagonId = null; // ID of hitched wagon
 
         // Viewport configuration
         const VIEWPORT_WIDTH = 60;
@@ -2246,9 +2301,10 @@
                 showToast(`Now controlling ${result.name}!`, 'success');
                 showGameScreen();
 
-                // Fetch recording and autorepeat status when entering game
+                // Fetch recording, autorepeat, and hitch status when entering game
                 await fetchRecordingStatus();
                 await fetchAutorepeatStatus();
+                await fetchHitchStatus();
                 updatePlayButtonVisibility();
             } catch (err) {
                 showToast('Failed to select monster: ' + err.message, 'error');
@@ -2611,6 +2667,9 @@
         // Play/autorepeat button
         document.getElementById('play-btn').addEventListener('click', toggleAutorepeat);
 
+        // Hitch/unhitch button
+        document.getElementById('hitch-btn').addEventListener('click', toggleHitch);
+
         // Viewport click handler for object selection
         document.getElementById('viewport-area').addEventListener('click', handleViewportClick);
 
@@ -2681,6 +2740,11 @@
                 case 'P':
                     e.preventDefault();
                     await toggleAutorepeat();
+                    return;
+                case 'h':
+                case 'H':
+                    e.preventDefault();
+                    await toggleHitch();
                     return;
             }
 
@@ -3042,6 +3106,100 @@
                 playBtn.classList.remove('hidden');
             } else {
                 playBtn.classList.add('hidden');
+            }
+        }
+
+        // =============================================================================
+        // Wagon Hitching System Functions
+        // =============================================================================
+
+        // Toggle hitch on/off
+        async function toggleHitch() {
+            if (!activeMonster) return;
+
+            if (isHitched) {
+                await unhitchWagon();
+            } else {
+                await hitchWagon();
+            }
+        }
+
+        // Hitch to adjacent wagon
+        async function hitchWagon() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/hitch-wagon?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                if (result.hitched) {
+                    isHitched = true;
+                    hitchedWagonId = result.wagon_id;
+                    updateHitchUI();
+                    showSpeechBubble('🔗 Hitched!', 'success');
+                    showToast(result.message, 'success');
+                } else {
+                    showSpeechBubble(result.message, 'error');
+                    showToast(result.message, 'error');
+                }
+
+            } catch (err) {
+                showSpeechBubble('Failed to hitch!', 'error');
+                showToast('Failed to hitch wagon: ' + err.message, 'error');
+            }
+        }
+
+        // Unhitch from current wagon
+        async function unhitchWagon() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/unhitch-wagon?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                isHitched = false;
+                hitchedWagonId = null;
+                updateHitchUI();
+                showSpeechBubble('Unhitched!', 'info');
+                showToast(result.message, 'info');
+
+            } catch (err) {
+                showToast('Failed to unhitch wagon: ' + err.message, 'error');
+            }
+        }
+
+        // Fetch current hitch status
+        async function fetchHitchStatus() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/${activeMonster.id}/hitch-status?token=${authToken}`, 'GET');
+                isHitched = result.hitched;
+                hitchedWagonId = result.wagon_id;
+                updateHitchUI();
+            } catch (err) {
+                console.error('Failed to fetch hitch status:', err);
+                isHitched = false;
+                hitchedWagonId = null;
+                updateHitchUI();
+            }
+        }
+
+        // Update the hitch UI elements
+        function updateHitchUI() {
+            const hitchBtn = document.getElementById('hitch-btn');
+            const hitchIndicator = document.getElementById('hitch-indicator');
+
+            if (isHitched) {
+                hitchBtn.textContent = 'Unhitch';
+                hitchBtn.classList.add('hitched');
+                hitchIndicator.classList.remove('hidden');
+            } else {
+                hitchBtn.textContent = 'Hitch';
+                hitchBtn.classList.remove('hitched');
+                hitchIndicator.classList.add('hidden');
             }
         }
 
@@ -3446,6 +3604,7 @@
 
                 // Load entities in zone
                 zoneEntities = await apiCall(`/api/zones/${activeMonster.current_zone_id}/entities`);
+                window._zoneEntities = zoneEntities;  // Expose for testing
 
                 // Load all monsters in zone (multiplayer visibility)
                 zoneMonsters = await apiCall(`/api/zones/${activeMonster.current_zone_id}/monsters`);
@@ -3793,16 +3952,21 @@
                             // Only render at the item's origin position
                             if (entity.x === worldX) {
                                 char = getItemEmoji(entity);
-                                // Check quality for glow effects
+                                // Check quality for glow effects and brightness
                                 // Quality is stored as 0-100 scale (percentage)
                                 const quality = entity.metadata?.quality;
                                 let qualityClass = '';
+                                let brightnessStyle = '';
                                 if (quality !== undefined) {
                                     if (quality >= 90) {
                                         qualityClass = ' exceptional-quality';  // Gold glow
                                     } else if (quality >= 75) {
                                         qualityClass = ' high-quality';  // Silver glow
                                     }
+                                    // Brightness scales with quality: 0% = 0.6, 100% = 1.4
+                                    // Formula: 0.6 + (quality/100) * 0.8
+                                    const brightness = 0.6 + (quality / 100) * 0.8;
+                                    brightnessStyle = ` style="filter: brightness(${brightness.toFixed(2)})"`;
                                 }
 
                                 // Check durability for red tint effects
@@ -3821,6 +3985,8 @@
                                 }
 
                                 colorClass = 'item item-emoji' + qualityClass + durabilityClass;
+                                // Store brightness style for later use in row rendering
+                                entity._brightnessStyle = brightnessStyle;
                                 isDoubleWidth = true;
                             } else {
                                 // This is the second cell of the item - skip rendering
@@ -3897,7 +4063,9 @@
                     }
 
                     // Add character with color span
-                    row += `<span class="${colorClass}">${char}</span>`;
+                    // Include brightness style for items with quality
+                    const brightnessAttr = (entity && entity._brightnessStyle) ? entity._brightnessStyle : '';
+                    row += `<span class="${colorClass}"${brightnessAttr}>${char}</span>`;
 
                     // If this was a double-width character, skip the next cell
                     if (isDoubleWidth) {
