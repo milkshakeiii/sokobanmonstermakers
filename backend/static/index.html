@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monster Workshop</title>
+    <style>
+        :root {
+            --bg-color: #0a0a14;
+            --panel-bg: #141420;
+            --text-color: #c8c8c8;
+            --highlight-color: #64c8ff;
+            --accent-color: #6464ff;
+            --success-color: #64ff64;
+            --error-color: #ff6464;
+            --border-color: #3c3c5a;
+            --warning-color: #ffcc00;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            padding: 20px;
+        }
+
+        .container.narrow {
+            max-width: 400px;
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--highlight-color);
+            margin-bottom: 10px;
+            font-size: 2rem;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: var(--text-color);
+            margin-bottom: 30px;
+            opacity: 0.7;
+        }
+
+        .card {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: var(--highlight-color);
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--text-color);
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            font-size: 1rem;
+            font-family: inherit;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-color);
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--highlight-color);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            font-size: 1rem;
+            font-family: inherit;
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn:hover {
+            background-color: var(--highlight-color);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .message.success {
+            display: block;
+            background-color: rgba(100, 255, 100, 0.1);
+            border: 1px solid var(--success-color);
+            color: var(--success-color);
+        }
+
+        .message.error {
+            display: block;
+            background-color: rgba(255, 100, 100, 0.1);
+            border: 1px solid var(--error-color);
+            color: var(--error-color);
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: all 0.2s;
+        }
+
+        .tab:first-child {
+            border-radius: 4px 0 0 4px;
+        }
+
+        .tab:last-child {
+            border-radius: 0 4px 4px 0;
+        }
+
+        .tab.active {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            color: white;
+        }
+
+        .tab:hover:not(.active) {
+            background-color: var(--panel-bg);
+        }
+
+        .form-section {
+            display: none;
+        }
+
+        .form-section.active {
+            display: block;
+        }
+
+        .screen {
+            display: none;
+        }
+
+        .screen.active {
+            display: block;
+        }
+
+        .auth-container {
+            display: block;
+        }
+
+        .auth-container.hidden {
+            display: none;
+        }
+
+        .user-info {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .user-info h2 {
+            color: var(--highlight-color);
+            margin-bottom: 16px;
+        }
+
+        .user-info p {
+            margin-bottom: 8px;
+        }
+
+        .user-info .label {
+            color: var(--text-color);
+            opacity: 0.7;
+        }
+
+        .user-info .value {
+            color: var(--success-color);
+            font-weight: bold;
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--highlight-color);
+            color: var(--highlight-color);
+            background-color: transparent;
+        }
+
+        .password-requirements {
+            font-size: 0.85rem;
+            color: var(--text-color);
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+
+        .nav-links {
+            text-align: center;
+            margin-top: 12px;
+        }
+
+        .nav-links a {
+            color: var(--highlight-color);
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+
+        /* Monster Selection Styles */
+        .monster-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .monster-card {
+            background-color: var(--panel-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .monster-card:hover {
+            border-color: var(--highlight-color);
+            transform: translateY(-2px);
+        }
+
+        .monster-card.selected {
+            border-color: var(--success-color);
+            box-shadow: 0 0 10px rgba(100, 255, 100, 0.3);
+        }
+
+        .monster-card.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .monster-card.disabled:hover {
+            border-color: var(--border-color);
+            transform: none;
+        }
+
+        .monster-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .monster-name {
+            font-size: 1.3rem;
+            color: var(--highlight-color);
+            font-weight: bold;
+        }
+
+        .monster-cost {
+            font-size: 0.9rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background-color: var(--bg-color);
+        }
+
+        .monster-cost.affordable {
+            color: var(--success-color);
+        }
+
+        .monster-cost.expensive {
+            color: var(--error-color);
+        }
+
+        .monster-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 6px;
+            background-color: var(--bg-color);
+            border-radius: 4px;
+        }
+
+        .stat-name {
+            font-size: 0.8rem;
+            color: var(--text-color);
+            opacity: 0.7;
+        }
+
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+
+        .stat-value.high {
+            color: var(--success-color);
+        }
+
+        .stat-value.medium {
+            color: var(--warning-color);
+        }
+
+        .stat-value.low {
+            color: var(--text-color);
+        }
+
+        .monster-caps {
+            display: flex;
+            gap: 16px;
+            font-size: 0.85rem;
+            color: var(--text-color);
+            opacity: 0.8;
+        }
+
+        .cap-item {
+            display: flex;
+            gap: 4px;
+        }
+
+        /* Monster creation form */
+        .create-monster-form {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 24px;
+            margin-top: 20px;
+        }
+
+        .create-monster-form h3 {
+            color: var(--highlight-color);
+            margin-bottom: 16px;
+        }
+
+        .selected-monster-info {
+            padding: 12px;
+            background-color: var(--bg-color);
+            border-radius: 4px;
+            margin-bottom: 16px;
+        }
+
+        /* My Monsters List */
+        .my-monsters {
+            margin-top: 20px;
+        }
+
+        .my-monsters h3 {
+            color: var(--highlight-color);
+            margin-bottom: 16px;
+        }
+
+        .monster-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .owned-monster {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .owned-monster-info h4 {
+            color: var(--highlight-color);
+            margin-bottom: 4px;
+        }
+
+        .owned-monster-info span {
+            font-size: 0.9rem;
+            color: var(--text-color);
+            opacity: 0.7;
+        }
+
+        .btn-small {
+            width: auto;
+            padding: 8px 16px;
+            font-size: 0.9rem;
+        }
+
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 12px 16px;
+            background-color: var(--panel-bg);
+            border-radius: 8px;
+        }
+
+        .header-bar .player-info {
+            display: flex;
+            gap: 20px;
+        }
+
+        .header-bar .player-info span {
+            color: var(--text-color);
+        }
+
+        .header-bar .player-info .value {
+            color: var(--success-color);
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="auth-screen" class="container narrow screen active">
+        <h1>Monster Workshop</h1>
+        <p class="subtitle">A cooperative crafting game</p>
+
+        <!-- Auth Container -->
+        <div id="auth-container" class="auth-container">
+            <div class="tabs">
+                <div class="tab active" data-tab="register" id="tab-register">Register</div>
+                <div class="tab" data-tab="login" id="tab-login">Login</div>
+            </div>
+
+            <!-- Register Form -->
+            <div id="register-section" class="form-section active">
+                <div class="card">
+                    <h2>Create Account</h2>
+                    <div id="register-message" class="message"></div>
+                    <form id="register-form">
+                        <div class="form-group">
+                            <label for="register-username">Username</label>
+                            <input type="text" id="register-username" name="username" required minlength="3" maxlength="50" autocomplete="username">
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password">Password</label>
+                            <input type="password" id="register-password" name="password" required minlength="8" autocomplete="new-password">
+                            <p class="password-requirements">Minimum 8 characters</p>
+                        </div>
+                        <button type="submit" class="btn" id="register-btn">Register</button>
+                    </form>
+                    <div class="nav-links">
+                        Already have an account? <a id="goto-login">Login here</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Login Form -->
+            <div id="login-section" class="form-section">
+                <div class="card">
+                    <h2>Sign In</h2>
+                    <div id="login-message" class="message"></div>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label for="login-username">Username</label>
+                            <input type="text" id="login-username" name="username" required autocomplete="username">
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <input type="password" id="login-password" name="password" required autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn" id="login-btn">Login</button>
+                    </form>
+                    <div class="nav-links">
+                        Don't have an account? <a id="goto-register">Register here</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monster Selection Screen -->
+    <div id="monster-screen" class="container screen">
+        <h1>Monster Workshop</h1>
+        <p class="subtitle">Select or Create a Monster</p>
+
+        <div class="header-bar">
+            <div class="player-info">
+                <span>Player: <span class="value" id="header-username"></span></span>
+                <span>Commune: <span class="value" id="header-commune"></span></span>
+                <span>Renown: <span class="value" id="header-renown"></span></span>
+            </div>
+            <button class="btn btn-secondary btn-small" id="header-logout-btn">Logout</button>
+        </div>
+
+        <div id="monster-message" class="message"></div>
+
+        <!-- Available Monster Types -->
+        <h2 style="color: var(--highlight-color); margin-bottom: 16px;">Available Monster Types</h2>
+        <div id="monster-types-grid" class="monster-grid">
+            <!-- Monster types will be loaded here -->
+        </div>
+
+        <!-- Create Monster Form (shown when a type is selected) -->
+        <div id="create-monster-form" class="create-monster-form" style="display: none;">
+            <h3>Create New Monster</h3>
+            <div id="selected-monster-info" class="selected-monster-info"></div>
+            <form id="new-monster-form">
+                <div class="form-group">
+                    <label for="monster-name">Monster Name</label>
+                    <input type="text" id="monster-name" name="name" required minlength="1" maxlength="100" placeholder="Enter a name for your monster">
+                </div>
+                <button type="submit" class="btn" id="create-monster-btn">Create Monster</button>
+            </form>
+        </div>
+
+        <!-- My Monsters -->
+        <div id="my-monsters" class="my-monsters">
+            <h3>My Monsters</h3>
+            <div id="monster-list" class="monster-list">
+                <!-- Player's monsters will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '';  // Same origin
+
+        // State
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = null;
+        let monsterTypes = [];
+        let selectedMonsterType = null;
+        let myMonsters = [];
+
+        // DOM Elements - Auth
+        const authScreen = document.getElementById('auth-screen');
+        const monsterScreen = document.getElementById('monster-screen');
+        const tabRegister = document.getElementById('tab-register');
+        const tabLogin = document.getElementById('tab-login');
+        const registerSection = document.getElementById('register-section');
+        const loginSection = document.getElementById('login-section');
+        const registerForm = document.getElementById('register-form');
+        const loginForm = document.getElementById('login-form');
+        const registerMessage = document.getElementById('register-message');
+        const loginMessage = document.getElementById('login-message');
+        const gotoLogin = document.getElementById('goto-login');
+        const gotoRegister = document.getElementById('goto-register');
+
+        // DOM Elements - Monster Screen
+        const monsterTypesGrid = document.getElementById('monster-types-grid');
+        const createMonsterForm = document.getElementById('create-monster-form');
+        const selectedMonsterInfo = document.getElementById('selected-monster-info');
+        const newMonsterForm = document.getElementById('new-monster-form');
+        const monsterMessage = document.getElementById('monster-message');
+        const monsterList = document.getElementById('monster-list');
+        const headerLogoutBtn = document.getElementById('header-logout-btn');
+
+        // Tab switching
+        function switchTab(tab) {
+            if (tab === 'register') {
+                tabRegister.classList.add('active');
+                tabLogin.classList.remove('active');
+                registerSection.classList.add('active');
+                loginSection.classList.remove('active');
+            } else {
+                tabLogin.classList.add('active');
+                tabRegister.classList.remove('active');
+                loginSection.classList.add('active');
+                registerSection.classList.remove('active');
+            }
+        }
+
+        tabRegister.addEventListener('click', () => switchTab('register'));
+        tabLogin.addEventListener('click', () => switchTab('login'));
+        gotoLogin.addEventListener('click', () => switchTab('login'));
+        gotoRegister.addEventListener('click', () => switchTab('register'));
+
+        // Show message
+        function showMessage(element, message, isError = false) {
+            element.textContent = message;
+            element.className = 'message ' + (isError ? 'error' : 'success');
+        }
+
+        // Clear message
+        function clearMessage(element) {
+            element.textContent = '';
+            element.className = 'message';
+        }
+
+        // API call helper
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            };
+
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            const response = await fetch(API_URL + endpoint, options);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.detail || 'An error occurred');
+            }
+
+            return data;
+        }
+
+        // Show auth screen
+        function showAuthScreen() {
+            authScreen.classList.add('active');
+            monsterScreen.classList.remove('active');
+        }
+
+        // Show monster screen
+        function showMonsterScreen() {
+            authScreen.classList.remove('active');
+            monsterScreen.classList.add('active');
+            loadMonsterTypes();
+            loadMyMonsters();
+            updateHeader();
+        }
+
+        // Update header with user info
+        function updateHeader() {
+            if (currentUser) {
+                document.getElementById('header-username').textContent = currentUser.username;
+                document.getElementById('header-commune').textContent = currentUser.commune_name || 'None';
+                document.getElementById('header-renown').textContent = currentUser.renown || '0';
+            }
+        }
+
+        // Get stat class based on value
+        function getStatClass(value) {
+            if (value >= 16) return 'high';
+            if (value >= 12) return 'medium';
+            return 'low';
+        }
+
+        // Load monster types
+        async function loadMonsterTypes() {
+            try {
+                monsterTypes = await apiCall('/api/monsters/types');
+                renderMonsterTypes();
+            } catch (err) {
+                showMessage(monsterMessage, 'Failed to load monster types: ' + err.message, true);
+            }
+        }
+
+        // Render monster type cards
+        function renderMonsterTypes() {
+            const currentRenown = parseInt(currentUser?.renown || '0');
+
+            monsterTypesGrid.innerHTML = monsterTypes.map(type => {
+                const affordable = currentRenown >= type.cost;
+                const stats = type.base_stats;
+
+                return `
+                    <div class="monster-card ${affordable ? '' : 'disabled'} ${selectedMonsterType === type.name ? 'selected' : ''}"
+                         data-type="${type.name}" ${affordable ? '' : 'title="Not enough renown"'}>
+                        <div class="monster-header">
+                            <span class="monster-name">${type.name}</span>
+                            <span class="monster-cost ${affordable ? 'affordable' : 'expensive'}">${type.cost} Renown</span>
+                        </div>
+                        <div class="monster-stats">
+                            <div class="stat">
+                                <div class="stat-name">STR</div>
+                                <div class="stat-value ${getStatClass(stats.str)}">${stats.str}</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-name">DEX</div>
+                                <div class="stat-value ${getStatClass(stats.dex)}">${stats.dex}</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-name">CON</div>
+                                <div class="stat-value ${getStatClass(stats.con)}">${stats.con}</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-name">INT</div>
+                                <div class="stat-value ${getStatClass(stats.int)}">${stats.int}</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-name">WIS</div>
+                                <div class="stat-value ${getStatClass(stats.wis)}">${stats.wis}</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-name">CHA</div>
+                                <div class="stat-value ${getStatClass(stats.cha)}">${stats.cha}</div>
+                            </div>
+                        </div>
+                        <div class="monster-caps">
+                            <div class="cap-item">Body Cap: ${type.body_cap}</div>
+                            <div class="cap-item">Mind Cap: ${type.mind_cap}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Add click handlers
+            document.querySelectorAll('.monster-card:not(.disabled)').forEach(card => {
+                card.addEventListener('click', () => selectMonsterType(card.dataset.type));
+            });
+        }
+
+        // Select a monster type
+        function selectMonsterType(typeName) {
+            selectedMonsterType = typeName;
+            renderMonsterTypes();
+
+            const type = monsterTypes.find(t => t.name === typeName);
+            if (type) {
+                const stats = type.base_stats;
+                selectedMonsterInfo.innerHTML = `
+                    <strong>Selected: ${type.name}</strong> (Cost: ${type.cost} Renown)<br>
+                    <small>Stats: STR ${stats.str}, DEX ${stats.dex}, CON ${stats.con}, INT ${stats.int}, WIS ${stats.wis}, CHA ${stats.cha}</small>
+                `;
+                createMonsterForm.style.display = 'block';
+                document.getElementById('monster-name').focus();
+            }
+        }
+
+        // Load player's monsters
+        async function loadMyMonsters() {
+            try {
+                myMonsters = await apiCall(`/api/monsters?token=${authToken}`);
+                renderMyMonsters();
+            } catch (err) {
+                console.error('Failed to load monsters:', err);
+            }
+        }
+
+        // Render player's monsters
+        function renderMyMonsters() {
+            if (myMonsters.length === 0) {
+                monsterList.innerHTML = '<p style="color: var(--text-color); opacity: 0.7;">No monsters yet. Create one above!</p>';
+                return;
+            }
+
+            monsterList.innerHTML = myMonsters.map(monster => `
+                <div class="owned-monster">
+                    <div class="owned-monster-info">
+                        <h4>${monster.name}</h4>
+                        <span>${monster.monster_type} - STR ${monster.str_}, DEX ${monster.dex}, CON ${monster.con}, INT ${monster.int_}, WIS ${monster.wis}, CHA ${monster.cha}</span>
+                    </div>
+                    <button class="btn btn-secondary btn-small" disabled>Select</button>
+                </div>
+            `).join('');
+        }
+
+        // Create monster form submission
+        newMonsterForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearMessage(monsterMessage);
+
+            if (!selectedMonsterType) {
+                showMessage(monsterMessage, 'Please select a monster type', true);
+                return;
+            }
+
+            const name = document.getElementById('monster-name').value.trim();
+            if (!name) {
+                showMessage(monsterMessage, 'Please enter a name for your monster', true);
+                return;
+            }
+
+            try {
+                const monster = await apiCall(`/api/monsters?token=${authToken}`, 'POST', {
+                    monster_type: selectedMonsterType,
+                    name: name
+                });
+
+                showMessage(monsterMessage, `${monster.name} the ${monster.monster_type} has been created!`);
+
+                // Reset form
+                selectedMonsterType = null;
+                document.getElementById('monster-name').value = '';
+                createMonsterForm.style.display = 'none';
+
+                // Refresh user info (for updated renown) and monsters list
+                const user = await apiCall(`/api/auth/me?token=${authToken}`);
+                currentUser = user;
+                updateHeader();
+                renderMonsterTypes();
+                loadMyMonsters();
+
+            } catch (err) {
+                showMessage(monsterMessage, err.message, true);
+            }
+        });
+
+        // Check if already logged in
+        async function checkAuth() {
+            if (!authToken) {
+                showAuthScreen();
+                return;
+            }
+
+            try {
+                const user = await apiCall(`/api/auth/me?token=${authToken}`);
+                currentUser = user;
+                showMonsterScreen();
+            } catch (err) {
+                localStorage.removeItem('authToken');
+                authToken = null;
+                showAuthScreen();
+            }
+        }
+
+        // Register
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearMessage(registerMessage);
+
+            const username = document.getElementById('register-username').value.trim();
+            const password = document.getElementById('register-password').value;
+
+            if (password.length < 8) {
+                showMessage(registerMessage, 'Password must be at least 8 characters', true);
+                return;
+            }
+
+            try {
+                const data = await apiCall('/api/auth/register', 'POST', { username, password });
+
+                authToken = data.token;
+                localStorage.setItem('authToken', authToken);
+
+                showMessage(registerMessage, 'Registration successful! Welcome, ' + data.username);
+
+                // Get user info and show monster screen
+                const user = await apiCall(`/api/auth/me?token=${authToken}`);
+                currentUser = user;
+
+                setTimeout(() => {
+                    showMonsterScreen();
+                }, 1000);
+
+            } catch (err) {
+                showMessage(registerMessage, err.message, true);
+            }
+        });
+
+        // Login
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearMessage(loginMessage);
+
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+
+            try {
+                const data = await apiCall('/api/auth/login', 'POST', { username, password });
+
+                authToken = data.token;
+                localStorage.setItem('authToken', authToken);
+
+                showMessage(loginMessage, 'Login successful!');
+
+                // Get user info and show monster screen
+                const user = await apiCall(`/api/auth/me?token=${authToken}`);
+                currentUser = user;
+
+                setTimeout(() => {
+                    showMonsterScreen();
+                }, 500);
+
+            } catch (err) {
+                showMessage(loginMessage, err.message, true);
+            }
+        });
+
+        // Logout
+        function logout() {
+            apiCall(`/api/auth/logout?token=${authToken}`, 'POST').catch(() => {});
+            localStorage.removeItem('authToken');
+            authToken = null;
+            currentUser = null;
+            selectedMonsterType = null;
+            myMonsters = [];
+            showAuthScreen();
+        }
+
+        headerLogoutBtn.addEventListener('click', logout);
+
+        // Initial check
+        checkAuth();
+    </script>
+</body>
+</html>

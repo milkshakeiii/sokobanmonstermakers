@@ -20,7 +20,7 @@ class Zone(Base):
     width = Column(Integer, nullable=False, default=100)
     height = Column(Integer, nullable=False, default=100)
     terrain_data = Column(JSON, nullable=True)  # Grid of terrain types
-    metadata = Column(JSON, nullable=True)  # Zone-specific data
+    zone_metadata = Column(JSON, nullable=True)  # Zone-specific data
 
     # Relationships
     entities = relationship("Entity", back_populates="zone", cascade="all, delete-orphan")
@@ -47,7 +47,7 @@ class Entity(Base):
     owner_id = Column(String(36), nullable=True)  # Commune ID
 
     # Entity-specific data
-    metadata = Column(JSON, nullable=True)  # quality, durability, contents, good_type, etc.
+    entity_metadata = Column(JSON, nullable=True)  # quality, durability, contents, good_type, etc.
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

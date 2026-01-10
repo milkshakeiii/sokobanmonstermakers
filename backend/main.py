@@ -11,8 +11,11 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 from pydantic import BaseModel, Field
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +24,16 @@ from models.player import Player, Session, Commune
 from models.monster import Monster, MONSTER_TYPES
 from models.zone import Zone, Entity
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Password hashing functions using bcrypt directly
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify a password against a hash."""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 # FastAPI app
 app = FastAPI(
@@ -39,6 +50,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Static files serving
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Game configuration
 GAME_TIME_MULTIPLIER = 30  # 1 real second = 30 game seconds
@@ -89,6 +105,37 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class MonsterTypeInfo(BaseModel):
+    name: str
+    cost: int
+    body_cap: int
+    mind_cap: int
+    base_stats: dict
+
+
+class MonsterInfo(BaseModel):
+    id: str
+    name: str
+    monster_type: str
+    str_: int
+    dex: int
+    con: int
+    int_: int
+    wis: int
+    cha: int
+    body_fitting_used: int
+    mind_fitting_used: int
+    current_zone_id: Optional[str]
+    x: int
+    y: int
+
+
+class CreateMonsterRequest(BaseModel):
+    monster_type: str
+    name: str = Field(..., min_length=1, max_length=100)
+    transferable_skills: list[str] = Field(default_factory=list, max_length=3)
+
+
 # =============================================================================
 # Dependency: Get current player from session token
 # =============================================================================
@@ -130,6 +177,12 @@ async def startup():
     print(f"Game time multiplier: {GAME_TIME_MULTIPLIER}x")
 
 
+@app.get("/", tags=["Root"])
+async def root():
+    """Serve the main web interface."""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
 # =============================================================================
 # Authentication Endpoints
 # =============================================================================
@@ -149,7 +202,7 @@ async def register(request: RegisterRequest):
             )
 
         # Create player
-        password_hash = pwd_context.hash(request.password)
+        password_hash = hash_password(request.password)
         player = Player(
             username=request.username,
             password_hash=password_hash
@@ -191,7 +244,7 @@ async def login(request: LoginRequest):
         )
         player = result.scalar_one_or_none()
 
-        if not player or not pwd_context.verify(request.password, player.password_hash):
+        if not player or not verify_password(request.password, player.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid username or password"
@@ -295,7 +348,139 @@ async def get_zone(zone_id: str):
             width=zone.width,
             height=zone.height,
             terrain_data=zone.terrain_data,
-            metadata=zone.metadata
+            metadata=zone.zone_metadata
+        )
+
+
+# =============================================================================
+# Monster Endpoints
+# =============================================================================
+
+@app.get("/api/monsters/types", response_model=list[MonsterTypeInfo], tags=["Monsters"])
+async def get_monster_types():
+    """Get all available monster types with their stats and costs."""
+    return [
+        MonsterTypeInfo(
+            name=name,
+            cost=data["cost"],
+            body_cap=data["body_cap"],
+            mind_cap=data["mind_cap"],
+            base_stats=data["base_stats"]
+        )
+        for name, data in MONSTER_TYPES.items()
+    ]
+
+
+@app.get("/api/monsters", response_model=list[MonsterInfo], tags=["Monsters"])
+async def get_player_monsters(token: str):
+    """Get all monsters belonging to the current player's commune."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        if not commune:
+            return []
+
+        # Get all monsters for this commune
+        result = await session.execute(
+            select(Monster).where(Monster.commune_id == commune.id)
+        )
+        monsters = result.scalars().all()
+
+        return [
+            MonsterInfo(
+                id=m.id,
+                name=m.name,
+                monster_type=m.monster_type,
+                str_=m.str_,
+                dex=m.dex,
+                con=m.con,
+                int_=m.int_,
+                wis=m.wis,
+                cha=m.cha,
+                body_fitting_used=m.body_fitting_used,
+                mind_fitting_used=m.mind_fitting_used,
+                current_zone_id=m.current_zone_id,
+                x=m.x,
+                y=m.y
+            )
+            for m in monsters
+        ]
+
+
+@app.post("/api/monsters", response_model=MonsterInfo, tags=["Monsters"])
+async def create_monster(request: CreateMonsterRequest, token: str):
+    """Create a new monster for the player's commune."""
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Validate monster type
+        if request.monster_type not in MONSTER_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid monster type. Must be one of: {', '.join(MONSTER_TYPES.keys())}"
+            )
+
+        # Get player's commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        if not commune:
+            raise HTTPException(status_code=400, detail="Player has no commune")
+
+        # Check if player has enough renown
+        monster_cost = MONSTER_TYPES[request.monster_type]["cost"]
+        current_renown = int(commune.renown)
+
+        if current_renown < monster_cost:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Not enough renown. Need {monster_cost}, have {current_renown}"
+            )
+
+        # Deduct cost
+        commune.renown = str(current_renown - monster_cost)
+
+        # Create the monster with base stats
+        base_stats = MONSTER_TYPES[request.monster_type]["base_stats"]
+        monster = Monster(
+            commune_id=commune.id,
+            monster_type=request.monster_type,
+            name=request.name,
+            str_=base_stats["str"],
+            dex=base_stats["dex"],
+            con=base_stats["con"],
+            int_=base_stats["int"],
+            wis=base_stats["wis"],
+            cha=base_stats["cha"],
+            transferable_skills=request.transferable_skills[:3]  # Max 3 skills
+        )
+        session.add(monster)
+        await session.commit()
+        await session.refresh(monster)
+
+        return MonsterInfo(
+            id=monster.id,
+            name=monster.name,
+            monster_type=monster.monster_type,
+            str_=monster.str_,
+            dex=monster.dex,
+            con=monster.con,
+            int_=monster.int_,
+            wis=monster.wis,
+            cha=monster.cha,
+            body_fitting_used=monster.body_fitting_used,
+            mind_fitting_used=monster.mind_fitting_used,
+            current_zone_id=monster.current_zone_id,
+            x=monster.x,
+            y=monster.y
         )
 
 
@@ -373,7 +558,7 @@ async def get_zone_state(zone_id: str):
                     "y": e.y,
                     "width": e.width,
                     "height": e.height,
-                    "metadata": e.metadata
+                    "metadata": e.entity_metadata
                 }
                 for e in entities
             ],
@@ -411,7 +596,7 @@ async def get_entity(entity_id: str):
             "width": entity.width,
             "height": entity.height,
             "owner_id": entity.owner_id,
-            "metadata": entity.metadata,
+            "metadata": entity.entity_metadata,
             "created_at": entity.created_at.isoformat(),
             "updated_at": entity.updated_at.isoformat()
         }

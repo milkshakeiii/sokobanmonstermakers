@@ -28,10 +28,10 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-REQUIRED_VERSION="3.11"
+REQUIRED_VERSION="3.10"
 
 if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
-    echo -e "${RED}Python 3.11 or higher is required. Found: $PYTHON_VERSION${NC}"
+    echo -e "${RED}Python 3.10 or higher is required. Found: $PYTHON_VERSION${NC}"
     exit 1
 fi
 echo -e "${GREEN}Python $PYTHON_VERSION detected${NC}"
