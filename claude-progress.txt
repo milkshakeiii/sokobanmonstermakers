@@ -493,10 +493,31 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 
 ### Git Commits:
 - b6df46c: Implement workshop input slot deposits (Feature 23)
+- c7134b5: Add workshop crafting system foundation (partial Feature 24)
+
+### Additional Work This Session:
+
+3. **Workshop Crafting System (Feature 24 - Partial)**
+   - Added `/api/workshops/{id}/select-recipe` endpoint
+   - Added `/api/workshops/{id}/status` endpoint for progress polling
+   - Recipe selection checks for required inputs and tools
+   - When all requirements met, crafting starts with time tracking
+   - Progress bar UI with polling updates
+   - Crafting completion creates output item and shows celebration
+   - **Skipped Feature 24** - requires tool slot implementation
+
+### Feature Statistics (End of Session):
+- Total features: 171
+- Passing: 73
+- In progress: 0
+- Completion: 42.7%
 
 ### Next Steps for Future Agents:
-1. Implement crafting with deposited ingredients
-2. Add output slot for crafted items
-3. Implement recipe execution (convert inputs to outputs)
-4. Add crafting progress bar
-5. Implement skill learning during crafting
+1. **Implement tool slots for workshops** - Required for Feature 24
+   - Add tool slot positions in workshop metadata
+   - Detect tool deposits (like input slots but for tools)
+   - Match deposited tools against recipe.tools_required_tags
+2. Implement crafting with deposited ingredients (requires matching input tags)
+3. Add skill learning during crafting
+4. Implement dispenser interactions (dispense items)
+5. Add gathering spots for raw materials
