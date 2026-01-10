@@ -781,6 +781,39 @@
             opacity: 0.7;
         }
 
+        /* ASCII Viewport Renderer */
+        .ascii-viewport {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.1;
+            white-space: pre;
+            color: var(--text-color);
+            background-color: #0d0d15;
+            padding: 8px;
+        }
+
+        .ascii-viewport .monster {
+            color: var(--success-color);
+            font-weight: bold;
+        }
+
+        .ascii-viewport .item {
+            color: var(--warning-color);
+        }
+
+        .ascii-viewport .blocked {
+            color: #666;
+        }
+
+        .ascii-viewport .grass {
+            color: #3a5a3a;
+        }
+
+        .ascii-viewport .signpost {
+            color: #ff69b4;  /* Hot pink for visibility */
+            text-shadow: 0 0 5px #ff69b4;
+        }
+
         /* Responsive game screen */
         @media (max-width: 768px) {
             .game-container {
@@ -1017,6 +1050,12 @@
         let activeMonster = null;  // Currently selected/controlled monster
         let availableSkills = [];  // List of all transferable skills
         let selectedSkills = [];   // Currently selected skills for new monster (max 3)
+        let zoneEntities = [];     // Entities in the current zone
+        let zoneTerrainData = {};  // Terrain data for the current zone
+
+        // Viewport configuration
+        const VIEWPORT_WIDTH = 60;
+        const VIEWPORT_HEIGHT = 20;
 
         // Toast notification system
         const toastContainer = document.getElementById('toast-container');
@@ -1163,7 +1202,7 @@
         }
 
         // Show game screen with selected monster
-        function showGameScreen() {
+        async function showGameScreen() {
             if (!activeMonster) {
                 showToast('No monster selected', 'error');
                 return;
@@ -1173,6 +1212,10 @@
             monsterScreen.classList.remove('active');
             gameScreen.classList.add('active');
             updateMonsterPanel();
+
+            // Load zone data and render viewport
+            await loadZoneData();
+            renderViewport();
         }
 
         // Update monster panel in game screen
@@ -1606,6 +1649,13 @@
                 case 'D':
                     direction = 'right';
                     break;
+                case ' ':  // Space
+                case 'Enter':
+                case 'e':
+                case 'E':
+                    e.preventDefault();
+                    await interactWithEntity();
+                    return;
             }
 
             if (direction) {
@@ -1627,9 +1677,181 @@
                 // Update active monster state
                 activeMonster = result;
                 updateMonsterPanel();
+
+                // Reload zone entities and re-render viewport (items may have moved)
+                await loadZoneData();
+                renderViewport();
             } catch (err) {
                 showToast('Move failed: ' + err.message, 'error');
             }
+        }
+
+        // Interact with adjacent entity (signpost, workshop, etc.)
+        async function interactWithEntity() {
+            if (!activeMonster) return;
+
+            try {
+                const result = await apiCall(`/api/monsters/interact?token=${authToken}`, 'POST', {
+                    monster_id: activeMonster.id
+                });
+
+                // Show message
+                showToast(result.message, result.action ? 'success' : 'info');
+
+                // Handle zone transition
+                if (result.action === 'zone_transition') {
+                    // Update monster state with new zone
+                    activeMonster.current_zone_id = result.new_zone_id;
+                    activeMonster.x = result.new_x;
+                    activeMonster.y = result.new_y;
+
+                    // Update UI
+                    document.getElementById('active-zone').textContent = result.new_zone_name;
+                    document.getElementById('zone-name-display').textContent = result.new_zone_name;
+                    document.getElementById('active-position').textContent = `(${result.new_x}, ${result.new_y})`;
+
+                    // Reload zone data for new zone
+                    await loadZoneData();
+                    renderViewport();
+                }
+            } catch (err) {
+                showToast('Interaction failed: ' + err.message, 'error');
+            }
+        }
+
+        // Load zone data (terrain and entities)
+        async function loadZoneData() {
+            if (!activeMonster || !activeMonster.current_zone_id) {
+                zoneEntities = [];
+                zoneTerrainData = {};
+                return;
+            }
+
+            try {
+                // Load zone details (includes terrain_data)
+                const zone = await apiCall(`/api/zones/${activeMonster.current_zone_id}`);
+                zoneTerrainData = zone.terrain_data || {};
+
+                // Load entities in zone
+                zoneEntities = await apiCall(`/api/zones/${activeMonster.current_zone_id}/entities`);
+            } catch (err) {
+                console.error('Failed to load zone data:', err);
+                zoneEntities = [];
+                zoneTerrainData = {};
+            }
+        }
+
+        // Check if a cell is blocked terrain
+        function isBlockedTerrain(x, y) {
+            if (!zoneTerrainData) return false;
+
+            // Check blocked array
+            if (zoneTerrainData.blocked) {
+                for (const cell of zoneTerrainData.blocked) {
+                    if (cell[0] === x && cell[1] === y) {
+                        return true;
+                    }
+                }
+            }
+
+            // Check grid if present
+            if (zoneTerrainData.grid) {
+                const grid = zoneTerrainData.grid;
+                if (y >= 0 && y < grid.length && x >= 0 && x < grid[y].length) {
+                    const cellType = grid[y][x];
+                    return ['wall', 'water', 'blocked', 'rock', 'void'].includes(cellType);
+                }
+            }
+
+            return false;
+        }
+
+        // Get entity at position
+        function getEntityAt(x, y) {
+            return zoneEntities.find(e => e.x === x && e.y === y);
+        }
+
+        // Render the ASCII viewport
+        function renderViewport() {
+            const viewportArea = document.getElementById('viewport-area');
+
+            if (!activeMonster) {
+                viewportArea.innerHTML = `
+                    <div class="viewport-placeholder">
+                        <p>Game World</p>
+                        <p class="small">Select a monster to start!</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Calculate camera position (center on monster, but clamp to zone bounds)
+            const monsterX = activeMonster.x;
+            const monsterY = activeMonster.y;
+
+            // Camera top-left corner, keeping monster centered
+            let cameraX = monsterX - Math.floor(VIEWPORT_WIDTH / 2);
+            let cameraY = monsterY - Math.floor(VIEWPORT_HEIGHT / 2);
+
+            // Clamp camera to zone bounds (assuming 100x100 zone for now)
+            const zoneWidth = 100;
+            const zoneHeight = 100;
+            cameraX = Math.max(0, Math.min(cameraX, zoneWidth - VIEWPORT_WIDTH));
+            cameraY = Math.max(0, Math.min(cameraY, zoneHeight - VIEWPORT_HEIGHT));
+
+            // Build the ASCII grid
+            let grid = [];
+            for (let y = 0; y < VIEWPORT_HEIGHT; y++) {
+                let row = '';
+                for (let x = 0; x < VIEWPORT_WIDTH; x++) {
+                    const worldX = cameraX + x;
+                    const worldY = cameraY + y;
+
+                    // Determine what to display at this position
+                    let char = '.';  // Default grass
+                    let colorClass = 'grass';
+
+                    // Check for blocked terrain
+                    if (isBlockedTerrain(worldX, worldY)) {
+                        char = '#';
+                        colorClass = 'blocked';
+                    }
+
+                    // Check for entity
+                    const entity = getEntityAt(worldX, worldY);
+                    if (entity) {
+                        if (entity.entity_type === 'item') {
+                            char = '*';
+                            colorClass = 'item';
+                        } else if (entity.entity_type === 'workshop') {
+                            char = 'W';
+                            colorClass = 'item';
+                        } else if (entity.entity_type === 'dispenser') {
+                            char = 'D';
+                            colorClass = 'item';
+                        } else if (entity.entity_type === 'signpost') {
+                            char = '>';
+                            colorClass = 'signpost';
+                        } else if (entity.entity_type === 'gathering_spot') {
+                            char = '~';
+                            colorClass = 'item';
+                        }
+                    }
+
+                    // Check for monster (player's monster takes priority)
+                    if (worldX === monsterX && worldY === monsterY) {
+                        char = '@';
+                        colorClass = 'monster';
+                    }
+
+                    // Add character with color span
+                    row += `<span class="${colorClass}">${char}</span>`;
+                }
+                grid.push(row);
+            }
+
+            // Create the viewport HTML
+            viewportArea.innerHTML = `<div class="ascii-viewport">${grid.join('\n')}</div>`;
         }
 
         // Initial check
