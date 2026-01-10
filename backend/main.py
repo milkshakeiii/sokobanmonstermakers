@@ -680,6 +680,81 @@ def is_terrain_blocked(terrain_data: dict, x: int, y: int) -> bool:
     return False
 
 
+async def get_entity_at_position(session, zone_id: str, x: int, y: int, entity_type: str = None) -> "Entity | None":
+    """Get an entity occupying a specific position, handling multi-cell entities.
+
+    This function checks if any entity's bounding box (x to x+width-1, y to y+height-1)
+    contains the target position.
+
+    Args:
+        session: Database session
+        zone_id: Zone to search in
+        x, y: Target position to check
+        entity_type: Optional filter for entity type (e.g., "item", "wagon")
+
+    Returns:
+        The Entity occupying that position, or None
+    """
+    # Build base query
+    query = select(Entity).where(Entity.zone_id == zone_id)
+    if entity_type:
+        query = query.where(Entity.entity_type == entity_type)
+
+    result = await session.execute(query)
+    entities = result.scalars().all()
+
+    for entity in entities:
+        entity_width = entity.width or 1
+        entity_height = entity.height or 1
+
+        # Check if position is within entity bounds
+        if (entity.x <= x < entity.x + entity_width and
+            entity.y <= y < entity.y + entity_height):
+            return entity
+
+    return None
+
+
+async def is_position_blocked_by_entity(session, zone_id: str, x: int, y: int,
+                                         entity_types: list = None, exclude_entity_id: str = None) -> bool:
+    """Check if a position is blocked by any entity (including multi-cell entities).
+
+    Args:
+        session: Database session
+        zone_id: Zone to check in
+        x, y: Target position
+        entity_types: Optional list of entity types to check (default: ["item", "wagon"])
+        exclude_entity_id: Optional entity ID to exclude from check (e.g., the entity being moved)
+
+    Returns:
+        True if position is blocked, False otherwise
+    """
+    if entity_types is None:
+        entity_types = ["item", "wagon"]
+
+    query = select(Entity).where(
+        Entity.zone_id == zone_id,
+        Entity.entity_type.in_(entity_types)
+    )
+
+    result = await session.execute(query)
+    entities = result.scalars().all()
+
+    for entity in entities:
+        if exclude_entity_id and entity.id == exclude_entity_id:
+            continue
+
+        entity_width = entity.width or 1
+        entity_height = entity.height or 1
+
+        # Check if position is within entity bounds
+        if (entity.x <= x < entity.x + entity_width and
+            entity.y <= y < entity.y + entity_height):
+            return True
+
+    return False
+
+
 def calculate_skill_decay(monster: Monster) -> dict:
     """Calculate decayed skill values based on time since last use.
 
@@ -1050,16 +1125,17 @@ async def move_monster(request: MoveMonsterRequest, token: str):
         deposit_info = None
 
         # Check for item at target position (for pushing)
+        # Use multi-cell aware function to detect items including wagons
+        item_at_target = None
         if monster.current_zone_id:
-            result = await session.execute(
-                select(Entity).where(
-                    Entity.zone_id == monster.current_zone_id,
-                    Entity.x == new_x,
-                    Entity.y == new_y,
-                    Entity.entity_type == "item"
-                )
+            item_at_target = await get_entity_at_position(
+                session, monster.current_zone_id, new_x, new_y, entity_type="item"
             )
-            item_at_target = result.scalars().first()  # Use first() to handle multiple items at same position
+            # Also check for wagons which are multi-cell entities
+            if not item_at_target:
+                item_at_target = await get_entity_at_position(
+                    session, monster.current_zone_id, new_x, new_y, entity_type="wagon"
+                )
 
             if item_at_target:
                 # Calculate where the item would be pushed to
@@ -1267,18 +1343,14 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                                 slot_y=push_y
                             )
                         else:
-                            # 6. No other item at push destination
-                            result = await session.execute(
-                                select(Entity).where(
-                                    Entity.zone_id == monster.current_zone_id,
-                                    Entity.x == push_x,
-                                    Entity.y == push_y,
-                                    Entity.entity_type == "item"
-                                )
+                            # 6. No other item at push destination (handles multi-cell entities)
+                            is_blocked = await is_position_blocked_by_entity(
+                                session, monster.current_zone_id, push_x, push_y,
+                                entity_types=["item", "wagon"],
+                                exclude_entity_id=item_at_target.id  # Don't count the item being pushed
                             )
-                            item_blocking_push = result.scalars().first()  # Use first() to handle multiple items
-                            if item_blocking_push:
-                                # Can't push into another item
+                            if is_blocked:
+                                # Can't push into another item or wagon
                                 return MoveResult(monster=monster_to_info(monster))
 
                             # Check if item was ON a dispenser (pushing FROM dispenser)
@@ -3268,6 +3340,138 @@ async def debug_collect_upkeep(monster_id: str):
             "upkeep_info_before": upkeep_before,
             "collection_result": result,
             "renown_after": int(commune.renown)
+        }
+
+
+@app.post("/api/debug/monsters/{monster_id}/teleport", tags=["Debug"])
+async def debug_teleport_monster(monster_id: str, x: int, y: int):
+    """Debug endpoint to teleport a monster to a specific position."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        old_x, old_y = monster.x, monster.y
+        monster.x = x
+        monster.y = y
+        await session.commit()
+
+        return {
+            "message": f"Teleported {monster.name} from ({old_x},{old_y}) to ({x},{y})",
+            "monster_id": monster.id,
+            "old_position": {"x": old_x, "y": old_y},
+            "new_position": {"x": x, "y": y}
+        }
+
+
+@app.post("/api/debug/monsters/{monster_id}/move", tags=["Debug"])
+async def debug_move_monster(monster_id: str, direction: str):
+    """Debug endpoint to move a monster in a direction (bypasses authentication).
+
+    This allows testing movement/collision without needing a valid session token.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Calculate new position
+        new_x, new_y = monster.x, monster.y
+        if direction == "up":
+            new_y -= 1
+        elif direction == "down":
+            new_y += 1
+        elif direction == "left":
+            new_x -= 1
+        elif direction == "right":
+            new_x += 1
+        else:
+            raise HTTPException(status_code=400, detail="Invalid direction")
+
+        # Get zone for collision detection
+        zone = None
+        if monster.current_zone_id:
+            result = await session.execute(
+                select(Zone).where(Zone.id == monster.current_zone_id)
+            )
+            zone = result.scalar_one_or_none()
+
+        zone_width = zone.width if zone else 100
+        zone_height = zone.height if zone else 100
+
+        # Check bounds
+        if new_x < 0 or new_y < 0 or new_x >= zone_width or new_y >= zone_height:
+            return {"blocked": True, "reason": "out_of_bounds", "monster_position": {"x": monster.x, "y": monster.y}}
+
+        # Check terrain
+        terrain_data = zone.terrain_data if zone else None
+        if is_terrain_blocked(terrain_data, new_x, new_y):
+            return {"blocked": True, "reason": "terrain", "monster_position": {"x": monster.x, "y": monster.y}}
+
+        # Check for pushable items (including multi-cell entities)
+        item_at_target = await get_entity_at_position(
+            session, monster.current_zone_id, new_x, new_y, entity_type="item"
+        )
+        if not item_at_target:
+            item_at_target = await get_entity_at_position(
+                session, monster.current_zone_id, new_x, new_y, entity_type="wagon"
+            )
+
+        pushed_item = None
+        if item_at_target:
+            # Calculate push destination
+            push_x, push_y = new_x, new_y
+            if direction == "up":
+                push_y -= 1
+            elif direction == "down":
+                push_y += 1
+            elif direction == "left":
+                push_x -= 1
+            elif direction == "right":
+                push_x += 1
+
+            # Check if push destination is blocked
+            if push_x < 0 or push_y < 0 or push_x >= zone_width or push_y >= zone_height:
+                return {"blocked": True, "reason": "push_out_of_bounds", "monster_position": {"x": monster.x, "y": monster.y}}
+
+            if is_terrain_blocked(terrain_data, push_x, push_y):
+                return {"blocked": True, "reason": "push_terrain", "monster_position": {"x": monster.x, "y": monster.y}}
+
+            # Check if push destination is blocked by another entity (multi-cell aware)
+            is_blocked = await is_position_blocked_by_entity(
+                session, monster.current_zone_id, push_x, push_y,
+                entity_types=["item", "wagon"],
+                exclude_entity_id=item_at_target.id
+            )
+            if is_blocked:
+                return {"blocked": True, "reason": "push_blocked_by_entity", "monster_position": {"x": monster.x, "y": monster.y}}
+
+            # Move the item
+            item_at_target.x = push_x
+            item_at_target.y = push_y
+            pushed_item = {
+                "id": item_at_target.id,
+                "type": item_at_target.entity_type,
+                "new_position": {"x": push_x, "y": push_y}
+            }
+
+        # Move the monster
+        monster.x = new_x
+        monster.y = new_y
+        await session.commit()
+
+        return {
+            "blocked": False,
+            "monster_position": {"x": new_x, "y": new_y},
+            "pushed_item": pushed_item
         }
 
 
