@@ -521,3 +521,155 @@ Next major milestone: Pygame frontend with pyunicodegame rendering.
 3. Add skill learning during crafting
 4. Implement dispenser interactions (dispense items)
 5. Add gathering spots for raw materials
+
+---
+
+## Session 9 - Implementation Agent (continued)
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Recording System (Feature 25)**
+   - Added `/api/monsters/recording/start` endpoint
+   - Added `/api/monsters/recording/stop` endpoint
+   - Added `/api/monsters/{id}/recording` GET endpoint
+   - Modified move_monster to record actions when recording is active
+   - Frontend UI: Record button, REC indicator with blinking dot, action count display
+   - R key shortcut to toggle recording
+   - Records move, push, and deposit actions with timestamps
+
+2. **Autorepeat/Playback System (Feature 26)**
+   - Added `/api/monsters/autorepeat/start` endpoint
+   - Added `/api/monsters/autorepeat/stop` endpoint
+   - Added `/api/monsters/autorepeat/step` endpoint (execute single action)
+   - Added `/api/monsters/{id}/autorepeat` GET endpoint
+   - Frontend UI: Play button, PLAY indicator with progress display
+   - P key shortcut to toggle autorepeat
+   - Automatic 500ms interval playback that loops through recorded sequence
+   - Monster position updates in real-time during playback
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 75
+- In progress: 0
+- Completion: 43.9%
+
+### Features Verified This Session:
+- Feature 25: Recording system start
+  - Clicked Record button, verified REC indicator appeared
+  - Moved monster around, verified action count increased
+  - Stopped recording, verified action count shown in toast
+
+- Feature 26: Recording system stop and playback
+  - Started autorepeat with Play button
+  - Verified monster replayed recorded movements
+  - Progress indicator showed current/total actions
+  - Stopped autorepeat, verified button changed back to Play
+
+### Files Modified This Session:
+- backend/main.py:
+  - Added RecordingAction, RecordingState, StartRecordingRequest, StopRecordingRequest models
+  - Added AutorepeatState, StartAutorepeatRequest, StopAutorepeatRequest models
+  - Added recording endpoints (start, stop, status)
+  - Added autorepeat endpoints (start, stop, step, status)
+  - Modified move_monster to record actions when recording is active
+
+- backend/static/index.html:
+  - Added recording indicator CSS (red pulsing dot, REC text)
+  - Added autorepeat indicator CSS (green, PLAY text)
+  - Added btn-success and btn-warning.recording CSS
+  - Added recording state variables and functions
+  - Added autorepeat state variables and functions
+  - Added event listeners for Record and Play buttons
+  - Added R and P keyboard shortcuts
+
+### Technical Notes:
+- Recording stores actions in monster.current_task JSON field
+- Each action contains: action_type, direction, entity_id, timestamp
+- Autorepeat uses setInterval at 500ms to execute actions
+- Sequence loops automatically when it reaches the end
+- Recording is cleared when new recording starts
+- Autorepeat preserves recorded_sequence after stopping
+
+### Git Commits:
+- 9eb707e: Implement recording and autorepeat system (Features 25, 26)
+
+### Next Steps for Future Agents:
+1. Get next pending feature and implement
+2. Consider implementing Feature 27 (auto-repeat stops on depleted resources)
+3. Implement tool slot system for workshops
+4. Add dispenser interactions
+5. Implement skill learning during crafting
+
+---
+
+## Session 10 - Implementation Agent (continued)
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Skill Learning During Work (Feature 31)**
+   - Added `transferable_skills` and `applied_skills` fields to MonsterInfo Pydantic model
+   - Created `monster_to_info()` helper function to standardize MonsterInfo creation
+   - Updated all MonsterInfo returns to include skill data
+   - Added Transferable Skills and Applied Skills display sections in game panel UI
+   - Added CSS styling for skill chips with percentage indicators
+   - Updated `updateAppliedSkillsDisplay()` function to update panel when skills are learned
+   - Modified `showCraftingComplete()` to update applied_skills in activeMonster and refresh display
+   - Added `/api/debug/workshops/{id}/complete-crafting` endpoint for testing
+
+2. **Verification Testing:**
+   - Created test monster (TestGoblin123) with Smithing transferable skill
+   - Deposited iron ore into workshop
+   - Selected Iron Ingot recipe and started crafting
+   - Used debug endpoint to accelerate crafting time
+   - Verified skill increased from 0% to 1% after crafting completed
+   - Confirmed INT bonus formula: base 0.01 + (INT - 10) / 100
+   - Monster with INT 10 got exactly 1% skill gain as expected
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 79
+- In progress: 0
+- Completion: 46.2%
+
+### Features Verified This Session:
+- Feature 31: Skill learning during work
+  - ✓ Monster skill level starts at 0%
+  - ✓ Crafting work matching skill (Smithing + Iron Ingot)
+  - ✓ Skill value increased to 1% after crafting
+  - ✓ INT bonus formula verified (INT 10 = 0 bonus, correctly got 1%)
+  - ✓ Applied Skills display updates in real-time
+
+### Files Modified This Session:
+- backend/main.py:
+  - Added `transferable_skills` and `applied_skills` to MonsterInfo model
+  - Added `monster_to_info()` helper function
+  - Updated all MonsterInfo constructors to include skill fields
+  - Added `/api/debug/workshops/{id}/complete-crafting` debug endpoint
+
+- backend/static/index.html:
+  - Added Transferable Skills display section in game panel
+  - Added Applied Skills display section in game panel
+  - Added CSS for `.skills-display`, `.skill-chip`, `.applied-skill-chip`, `.skill-level`
+  - Added `updateAppliedSkillsDisplay()` JavaScript function
+  - Updated `showCraftingComplete()` to refresh applied skills display
+
+### Technical Notes:
+- Skill learning formula: base_gain = 0.01, int_bonus = (INT - 10) / 100
+- Total skill gain per craft = 0.01 + max(0, int_bonus)
+- Skills capped at 1.0 (100%)
+- Skills stored in monster.applied_skills JSON field as {skill_name: level}
+- Monster with INT 10: 1% per craft
+- Monster with INT 18: 1.8% per craft
+
+### Git Commits (pending):
+- Implement skill learning system with UI display (Feature 31)
+
+### Next Steps for Future Agents:
+1. Get next pending feature from feature_get_next
+2. Consider implementing remaining game world features
+3. Test with high-INT monster (Elf) to verify INT bonus in practice
+4. Implement more crafting recipes and workshops

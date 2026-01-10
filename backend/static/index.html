@@ -845,6 +845,46 @@
             font-size: 0.9rem;
         }
 
+        .skills-display {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .skills-display .skill-chip {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+
+        .skills-display .applied-skill-chip {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .skills-display .applied-skill-chip .skill-level {
+            background-color: var(--success-color);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .skills-display .no-skills {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-style: italic;
+        }
+
         .equipment-row {
             display: flex;
             justify-content: space-between;
@@ -1057,6 +1097,11 @@
         .ascii-viewport .signpost {
             color: #ff69b4;  /* Hot pink for visibility */
             text-shadow: 0 0 5px #ff69b4;
+        }
+
+        .ascii-viewport .delivery {
+            color: #ffd700;  /* Gold for delivery/scoring locations */
+            text-shadow: 0 0 5px #ffd700;
         }
 
         .ascii-viewport .workshop {
@@ -1383,6 +1428,20 @@
                         <span id="active-position">(0, 0)</span>
                     </div>
                 </div>
+
+                <div class="panel-section">
+                    <h4>Transferable Skills</h4>
+                    <div id="transferable-skills-display" class="skills-display">
+                        <span class="no-skills">None selected</span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h4>Applied Skills</h4>
+                    <div id="applied-skills-display" class="skills-display">
+                        <span class="no-skills">No skills learned yet</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Game Viewport -->
@@ -1642,6 +1701,38 @@
             document.getElementById('active-position').textContent = `(${monster.x}, ${monster.y})`;
             document.getElementById('active-zone').textContent = monster.current_zone_id ? 'Starting Village' : 'Starting Village';
             document.getElementById('zone-name-display').textContent = 'Starting Village';
+
+            // Update transferable skills display
+            const transferableSkillsDiv = document.getElementById('transferable-skills-display');
+            if (monster.transferable_skills && monster.transferable_skills.length > 0) {
+                transferableSkillsDiv.innerHTML = monster.transferable_skills.map(skill =>
+                    `<span class="skill-chip">${skill}</span>`
+                ).join('');
+            } else {
+                transferableSkillsDiv.innerHTML = '<span class="no-skills">None selected</span>';
+            }
+
+            // Update applied skills display
+            updateAppliedSkillsDisplay(monster);
+        }
+
+        // Helper function to update applied skills display
+        function updateAppliedSkillsDisplay(monster) {
+            const appliedSkillsDiv = document.getElementById('applied-skills-display');
+            const appliedSkills = monster.applied_skills || {};
+            const skillEntries = Object.entries(appliedSkills);
+
+            if (skillEntries.length > 0) {
+                appliedSkillsDiv.innerHTML = skillEntries.map(([skill, level]) => {
+                    const percentage = Math.round(level * 100);
+                    return `<span class="applied-skill-chip">
+                        ${skill}
+                        <span class="skill-level">${percentage}%</span>
+                    </span>`;
+                }).join('');
+            } else {
+                appliedSkillsDiv.innerHTML = '<span class="no-skills">No skills learned yet</span>';
+            }
         }
 
         // Select and enter game with a monster
@@ -2347,6 +2438,17 @@
                 const autorepeatProgress = document.getElementById('autorepeat-progress');
                 autorepeatProgress.textContent = `${result.current_index}/${result.total_actions}`;
 
+                // Check if autorepeat was stopped (e.g., missing ingredient)
+                if (result.stopped) {
+                    if (autorepeatInterval) {
+                        clearInterval(autorepeatInterval);
+                        autorepeatInterval = null;
+                    }
+                    isAutorepeatPlaying = false;
+                    updateAutorepeatUI();
+                    showToast(result.stop_reason || 'Autorepeat stopped.', 'error');
+                }
+
             } catch (err) {
                 // Stop autorepeat on error
                 if (autorepeatInterval) {
@@ -2502,7 +2604,7 @@
 
         // Select a recipe by index
         async function selectRecipe(index) {
-            if (index >= 0 && index < currentRecipes.length && currentWorkshopId) {
+            if (index >= 0 && index < currentRecipes.length && currentWorkshopId && activeMonster) {
                 const recipe = currentRecipes[index];
                 hideRecipePopup();
 
@@ -2510,7 +2612,7 @@
                     const result = await apiCall(
                         `/api/workshops/${currentWorkshopId}/select-recipe?token=${authToken}`,
                         'POST',
-                        { workshop_id: currentWorkshopId, recipe_id: recipe.id }
+                        { workshop_id: currentWorkshopId, recipe_id: recipe.id, monster_id: activeMonster.id }
                     );
 
                     showToast(result.message, result.crafting_status.is_crafting ? 'success' : 'info');
@@ -2556,7 +2658,7 @@
                         craftingPollInterval = null;
 
                         if (status.progress >= 1.0) {
-                            showCraftingComplete(status.recipe_name);
+                            showCraftingComplete(status.recipe_name, status.skill_gained);
                             // Reload zone to show output item
                             await loadZoneData();
                             renderViewport();
@@ -2602,9 +2704,26 @@
         }
 
         // Show crafting complete celebration
-        function showCraftingComplete(recipeName) {
+        function showCraftingComplete(recipeName, skillGained) {
             hideCraftingProgress();
-            showToast(`🎉 Crafted ${recipeName}! 🎉`, 'success');
+
+            // Build message with optional skill gain info
+            let message = `Crafted ${recipeName}!`;
+            if (skillGained) {
+                const gainPercent = (skillGained.gain * 100).toFixed(1);
+                const levelPercent = (skillGained.new_level * 100).toFixed(1);
+                message += ` Learned +${gainPercent}% ${skillGained.skill} (now ${levelPercent}%)`;
+
+                // Update the activeMonster's applied_skills to reflect the skill gain
+                if (activeMonster) {
+                    if (!activeMonster.applied_skills) {
+                        activeMonster.applied_skills = {};
+                    }
+                    activeMonster.applied_skills[skillGained.skill] = skillGained.new_level;
+                    updateAppliedSkillsDisplay(activeMonster);
+                }
+            }
+            showToast(message, 'success');
 
             // Add celebration effect
             const celebration = document.createElement('div');
@@ -2756,6 +2875,9 @@
                         } else if (entity.entity_type === 'gathering_spot') {
                             char = '~';
                             colorClass = 'item';
+                        } else if (entity.entity_type === 'delivery') {
+                            char = '$';
+                            colorClass = 'delivery';
                         }
                     }
 

@@ -137,6 +137,8 @@ class MonsterInfo(BaseModel):
     current_zone_id: Optional[str]
     x: int
     y: int
+    transferable_skills: list[str] = []
+    applied_skills: dict = {}
 
 
 class DepositInfo(BaseModel):
@@ -551,7 +553,9 @@ async def get_player_monsters(token: str):
                 mind_fitting_used=m.mind_fitting_used,
                 current_zone_id=m.current_zone_id,
                 x=m.x,
-                y=m.y
+                y=m.y,
+                transferable_skills=m.transferable_skills or [],
+                applied_skills=m.applied_skills or {}
             )
             for m in monsters
         ]
@@ -655,7 +659,9 @@ async def create_monster(request: CreateMonsterRequest, token: str):
             mind_fitting_used=monster.mind_fitting_used,
             current_zone_id=monster.current_zone_id,
             x=monster.x,
-            y=monster.y
+            y=monster.y,
+            transferable_skills=monster.transferable_skills or [],
+            applied_skills=monster.applied_skills or {}
         )
 
 
@@ -692,6 +698,28 @@ def is_terrain_blocked(terrain_data: dict, x: int, y: int) -> bool:
     return False
 
 
+def monster_to_info(monster: Monster) -> MonsterInfo:
+    """Convert a Monster ORM object to a MonsterInfo Pydantic model."""
+    return MonsterInfo(
+        id=monster.id,
+        name=monster.name,
+        monster_type=monster.monster_type,
+        str_=monster.str_,
+        dex=monster.dex,
+        con=monster.con,
+        int_=monster.int_,
+        wis=monster.wis,
+        cha=monster.cha,
+        body_fitting_used=monster.body_fitting_used,
+        mind_fitting_used=monster.mind_fitting_used,
+        current_zone_id=monster.current_zone_id,
+        x=monster.x,
+        y=monster.y,
+        transferable_skills=monster.transferable_skills or [],
+        applied_skills=monster.applied_skills or {}
+    )
+
+
 def is_workshop_input_slot(workshop: Entity, x: int, y: int) -> bool:
     """Check if position (x, y) is an input slot of the workshop.
 
@@ -719,6 +747,74 @@ def is_workshop_input_slot(workshop: Entity, x: int, y: int) -> bool:
     # It's in the interior - consider it an input slot
     # The spec mentions input/output/tool slots - for now, all interior cells are input slots
     return True
+
+
+def is_workshop_tool_slot(workshop: Entity, x: int, y: int) -> bool:
+    """Check if position (x, y) is a tool slot of the workshop.
+
+    Tool slots are the cells on the left side of the workshop interior.
+    For a 4x4 workshop at (wx, wy), the tool slots are at (wx+1, wy+1) and (wx+1, wy+2).
+    """
+    if not workshop or workshop.entity_type != 'workshop':
+        return False
+
+    width = workshop.width or 4
+    height = workshop.height or 4
+
+    # Calculate relative position within workshop
+    rel_x = x - workshop.x
+    rel_y = y - workshop.y
+
+    # Check if inside workshop bounds
+    if rel_x < 0 or rel_y < 0 or rel_x >= width or rel_y >= height:
+        return False
+
+    # Check if on the edge (not a slot, that's the wall)
+    if rel_x == 0 or rel_x == width - 1 or rel_y == 0 or rel_y == height - 1:
+        return False
+
+    # Tool slots are on the left side of the interior (rel_x == 1)
+    return rel_x == 1
+
+
+def is_tool_item(item_metadata: dict) -> bool:
+    """Check if an item is a tool based on its metadata.
+
+    Tools have good_type containing 'tool' or have is_tool flag.
+    """
+    if not item_metadata:
+        return False
+
+    good_type = item_metadata.get('good_type', '').lower()
+    if 'tool' in good_type or 'hammer' in good_type or 'tongs' in good_type or 'anvil' in good_type or 'loom' in good_type:
+        return True
+
+    # Also check for explicit is_tool flag
+    return item_metadata.get('is_tool', False)
+
+
+def get_tool_tags(item_metadata: dict) -> list:
+    """Get the tool tags for an item.
+
+    Tool tags are used to match against recipe tool requirements.
+    """
+    if not item_metadata:
+        return []
+
+    tags = item_metadata.get('tool_tags', [])
+
+    # Also derive tags from good_type
+    good_type = item_metadata.get('good_type', '').lower()
+    if 'hammer' in good_type:
+        tags = tags + ['hammer'] if 'hammer' not in tags else tags
+    if 'tongs' in good_type:
+        tags = tags + ['tongs'] if 'tongs' not in tags else tags
+    if 'anvil' in good_type:
+        tags = tags + ['anvil'] if 'anvil' not in tags else tags
+    if 'loom' in good_type:
+        tags = tags + ['loom'] if 'loom' not in tags else tags
+
+    return tags
 
 
 @app.post("/api/monsters/move", response_model=MoveResult, tags=["Monsters"])
@@ -783,45 +879,13 @@ async def move_monster(request: MoveMonsterRequest, token: str):
         # Boundary checking
         if new_x < 0 or new_y < 0 or new_x >= zone_width or new_y >= zone_height:
             # Can't move outside zone bounds - return current position
-            monster_info = MonsterInfo(
-                id=monster.id,
-                name=monster.name,
-                monster_type=monster.monster_type,
-                str_=monster.str_,
-                dex=monster.dex,
-                con=monster.con,
-                int_=monster.int_,
-                wis=monster.wis,
-                cha=monster.cha,
-                body_fitting_used=monster.body_fitting_used,
-                mind_fitting_used=monster.mind_fitting_used,
-                current_zone_id=monster.current_zone_id,
-                x=monster.x,
-                y=monster.y
-            )
-            return MoveResult(monster=monster_info)
+            return MoveResult(monster=monster_to_info(monster))
 
         # Check terrain collision
         terrain_data = zone.terrain_data if zone else None
         if is_terrain_blocked(terrain_data, new_x, new_y):
             # Can't move into blocked terrain - return current position
-            monster_info = MonsterInfo(
-                id=monster.id,
-                name=monster.name,
-                monster_type=monster.monster_type,
-                str_=monster.str_,
-                dex=monster.dex,
-                con=monster.con,
-                int_=monster.int_,
-                wis=monster.wis,
-                cha=monster.cha,
-                body_fitting_used=monster.body_fitting_used,
-                mind_fitting_used=monster.mind_fitting_used,
-                current_zone_id=monster.current_zone_id,
-                x=monster.x,
-                y=monster.y
-            )
-            return MoveResult(monster=monster_info)
+            return MoveResult(monster=monster_to_info(monster))
 
         # Initialize push result variables
         pushed_item_name = None
@@ -837,7 +901,7 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                     Entity.entity_type == "item"
                 )
             )
-            item_at_target = result.scalar_one_or_none()
+            item_at_target = result.scalars().first()  # Use first() to handle multiple items at same position
 
             if item_at_target:
                 # Calculate where the item would be pushed to
@@ -855,43 +919,11 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 # 1. Not out of bounds
                 if push_x < 0 or push_y < 0 or push_x >= zone_width or push_y >= zone_height:
                     # Can't push item outside zone
-                    monster_info = MonsterInfo(
-                        id=monster.id,
-                        name=monster.name,
-                        monster_type=monster.monster_type,
-                        str_=monster.str_,
-                        dex=monster.dex,
-                        con=monster.con,
-                        int_=monster.int_,
-                        wis=monster.wis,
-                        cha=monster.cha,
-                        body_fitting_used=monster.body_fitting_used,
-                        mind_fitting_used=monster.mind_fitting_used,
-                        current_zone_id=monster.current_zone_id,
-                        x=monster.x,
-                        y=monster.y
-                    )
-                    return MoveResult(monster=monster_info)
+                    return MoveResult(monster=monster_to_info(monster))
 
                 # 2. Not blocked terrain
                 if is_terrain_blocked(terrain_data, push_x, push_y):
-                    monster_info = MonsterInfo(
-                        id=monster.id,
-                        name=monster.name,
-                        monster_type=monster.monster_type,
-                        str_=monster.str_,
-                        dex=monster.dex,
-                        con=monster.con,
-                        int_=monster.int_,
-                        wis=monster.wis,
-                        cha=monster.cha,
-                        body_fitting_used=monster.body_fitting_used,
-                        mind_fitting_used=monster.mind_fitting_used,
-                        current_zone_id=monster.current_zone_id,
-                        x=monster.x,
-                        y=monster.y
-                    )
-                    return MoveResult(monster=monster_info)
+                    return MoveResult(monster=monster_to_info(monster))
 
                 # 3. Check if push destination is a workshop input slot
                 result = await session.execute(
@@ -917,17 +949,43 @@ async def move_monster(request: MoveMonsterRequest, token: str):
 
                     # Update workshop metadata to include the deposited item
                     workshop_metadata = target_workshop.entity_metadata or {}
-                    if 'input_items' not in workshop_metadata:
-                        workshop_metadata['input_items'] = []
 
-                    workshop_metadata['input_items'].append({
-                        'name': item_name,
-                        'good_type': item_metadata.get('good_type', 'unknown'),
-                        'quality': item_metadata.get('quality', 1),
-                        'deposited_at': datetime.utcnow().isoformat(),
-                        'slot_x': push_x,
-                        'slot_y': push_y
-                    })
+                    # Check if this is a tool being deposited into a tool slot
+                    is_tool = is_tool_item(item_metadata)
+                    is_tool_slot = is_workshop_tool_slot(target_workshop, push_x, push_y)
+
+                    if is_tool and is_tool_slot:
+                        # Deposit as a tool
+                        if 'tool_items' not in workshop_metadata:
+                            workshop_metadata['tool_items'] = []
+
+                        # Get or initialize durability
+                        durability = item_metadata.get('durability', 10)  # Default 10 uses
+
+                        workshop_metadata['tool_items'].append({
+                            'name': item_name,
+                            'good_type': item_metadata.get('good_type', 'unknown'),
+                            'tool_tags': get_tool_tags(item_metadata),
+                            'durability': durability,
+                            'max_durability': item_metadata.get('max_durability', durability),
+                            'deposited_at': datetime.utcnow().isoformat(),
+                            'slot_x': push_x,
+                            'slot_y': push_y
+                        })
+                    else:
+                        # Deposit as an input ingredient
+                        if 'input_items' not in workshop_metadata:
+                            workshop_metadata['input_items'] = []
+
+                        workshop_metadata['input_items'].append({
+                            'name': item_name,
+                            'good_type': item_metadata.get('good_type', 'unknown'),
+                            'quality': item_metadata.get('quality', 1),
+                            'deposited_at': datetime.utcnow().isoformat(),
+                            'slot_x': push_x,
+                            'slot_y': push_y
+                        })
+
                     target_workshop.entity_metadata = workshop_metadata
                     # Mark JSON field as modified for SQLAlchemy to detect the change
                     flag_modified(target_workshop, 'entity_metadata')
@@ -946,41 +1004,168 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                         slot_y=push_y
                     )
                 else:
-                    # 4. No other item at push destination
-                    result = await session.execute(
+                    # 4. Check if pushing into a dispenser
+                    dispenser_result = await session.execute(
                         select(Entity).where(
                             Entity.zone_id == monster.current_zone_id,
                             Entity.x == push_x,
                             Entity.y == push_y,
-                            Entity.entity_type == "item"
+                            Entity.entity_type == "dispenser"
                         )
                     )
-                    item_blocking_push = result.scalar_one_or_none()
-                    if item_blocking_push:
-                        # Can't push into another item
-                        monster_info = MonsterInfo(
-                            id=monster.id,
-                            name=monster.name,
-                            monster_type=monster.monster_type,
-                            str_=monster.str_,
-                            dex=monster.dex,
-                            con=monster.con,
-                            int_=monster.int_,
-                            wis=monster.wis,
-                            cha=monster.cha,
-                            body_fitting_used=monster.body_fitting_used,
-                            mind_fitting_used=monster.mind_fitting_used,
-                            current_zone_id=monster.current_zone_id,
-                            x=monster.x,
-                            y=monster.y
-                        )
-                        return MoveResult(monster=monster_info)
+                    target_dispenser = dispenser_result.scalar_one_or_none()
 
-                    # Push is valid - move the item
-                    item_metadata = item_at_target.entity_metadata or {}
-                    pushed_item_name = item_metadata.get('name', 'Unknown Item')
-                    item_at_target.x = push_x
-                    item_at_target.y = push_y
+                    if target_dispenser:
+                        # Depositing item into dispenser
+                        item_metadata = item_at_target.entity_metadata or {}
+                        item_name = item_metadata.get('name', 'Unknown Item')
+                        item_good_type = item_metadata.get('good_type', 'unknown')
+                        pushed_item_name = item_name
+
+                        dispenser_metadata = target_dispenser.entity_metadata or {}
+                        dispenser_good_type = dispenser_metadata.get('good_type', '')
+
+                        # Check if item matches dispenser type (optional - can accept any)
+                        if 'stored_count' not in dispenser_metadata:
+                            dispenser_metadata['stored_count'] = 0
+
+                        # Deposit the item
+                        dispenser_metadata['stored_count'] = dispenser_metadata.get('stored_count', 0) + 1
+                        target_dispenser.entity_metadata = dispenser_metadata
+                        flag_modified(target_dispenser, 'entity_metadata')
+
+                        # Delete the item (it's now in the dispenser)
+                        await session.delete(item_at_target)
+
+                        # Spawn a new item on top of dispenser if there are stored items
+                        if dispenser_metadata.get('stored_count', 0) > 0:
+                            spawn_good_type = dispenser_metadata.get('good_type', 'item')
+                            spawned_item = Entity(
+                                zone_id=monster.current_zone_id,
+                                entity_type="item",
+                                x=push_x,
+                                y=push_y,
+                                entity_metadata={
+                                    'name': spawn_good_type.replace('_', ' ').title(),
+                                    'good_type': spawn_good_type,
+                                    'quality': 5,
+                                    'from_dispenser': True
+                                }
+                            )
+                            session.add(spawned_item)
+
+                        dispenser_name = dispenser_metadata.get('name', 'Dispenser')
+                        deposit_info = DepositInfo(
+                            workshop_id=target_dispenser.id,
+                            workshop_name=dispenser_name,
+                            item_name=item_name,
+                            slot_x=push_x,
+                            slot_y=push_y
+                        )
+                    else:
+                        # 5. Check if pushing into a delivery location
+                        delivery_result = await session.execute(
+                            select(Entity).where(
+                                Entity.zone_id == monster.current_zone_id,
+                                Entity.x == push_x,
+                                Entity.y == push_y,
+                                Entity.entity_type == "delivery"
+                            )
+                        )
+                        target_delivery = delivery_result.scalar_one_or_none()
+
+                        if target_delivery:
+                            # Score the item at delivery location
+                            item_metadata = item_at_target.entity_metadata or {}
+                            item_name = item_metadata.get('name', 'Unknown Item')
+                            item_quality = item_metadata.get('quality', 1)
+                            pushed_item_name = item_name
+
+                            delivery_metadata = target_delivery.entity_metadata or {}
+                            delivery_name = delivery_metadata.get('name', 'Delivery')
+
+                            # Calculate renown based on item quality
+                            renown_gained = item_quality * 10  # 10 renown per quality point
+
+                            # Get the monster's commune and award renown
+                            commune_id = monster.commune_id
+                            if commune_id:
+                                commune_result = await session.execute(
+                                    select(Commune).where(Commune.id == commune_id)
+                                )
+                                commune = commune_result.scalar_one_or_none()
+                                if commune:
+                                    current_renown = int(commune.renown or "0")
+                                    commune.renown = str(current_renown + renown_gained)
+
+                            # Delete the item (it's been delivered/scored)
+                            await session.delete(item_at_target)
+
+                            deposit_info = DepositInfo(
+                                workshop_id=target_delivery.id,
+                                workshop_name=delivery_name,
+                                item_name=f"{item_name} (Scored! +{renown_gained} renown)",
+                                slot_x=push_x,
+                                slot_y=push_y
+                            )
+                        else:
+                            # 6. No other item at push destination
+                            result = await session.execute(
+                                select(Entity).where(
+                                    Entity.zone_id == monster.current_zone_id,
+                                    Entity.x == push_x,
+                                    Entity.y == push_y,
+                                    Entity.entity_type == "item"
+                                )
+                            )
+                            item_blocking_push = result.scalars().first()  # Use first() to handle multiple items
+                            if item_blocking_push:
+                                # Can't push into another item
+                                return MoveResult(monster=monster_to_info(monster))
+
+                            # Check if item was ON a dispenser (pushing FROM dispenser)
+                            # new_x, new_y is where the item currently is (source position)
+                            dispenser_at_source = await session.execute(
+                                select(Entity).where(
+                                    Entity.zone_id == monster.current_zone_id,
+                                    Entity.x == new_x,
+                                    Entity.y == new_y,
+                                    Entity.entity_type == "dispenser"
+                                )
+                            )
+                            source_dispenser = dispenser_at_source.scalar_one_or_none()
+
+                            # Push is valid - move the item
+                            item_metadata = item_at_target.entity_metadata or {}
+                            pushed_item_name = item_metadata.get('name', 'Unknown Item')
+                            item_at_target.x = push_x
+                            item_at_target.y = push_y
+
+                            # If pushing from a dispenser, spawn a new item if it has more
+                            if source_dispenser:
+                                dispenser_metadata = source_dispenser.entity_metadata or {}
+                                stored_count = dispenser_metadata.get('stored_count', 0)
+
+                                if stored_count > 0:
+                                    # Decrement count and spawn new item
+                                    dispenser_metadata['stored_count'] = stored_count - 1
+                                    source_dispenser.entity_metadata = dispenser_metadata
+                                    flag_modified(source_dispenser, 'entity_metadata')
+
+                                    # Create new item at dispenser location
+                                    new_item = Entity(
+                                        zone_id=monster.current_zone_id,
+                                        entity_type="item",
+                                        x=new_x,
+                                        y=new_y,
+                                        entity_metadata={
+                                            'name': dispenser_metadata.get('good_type', 'Item').replace('_', ' ').title(),
+                                            'good_type': dispenser_metadata.get('good_type', 'unknown'),
+                                            'quality': 5,
+                                            'from_dispenser': True
+                                        }
+                                    )
+                                    session.add(new_item)
 
         # Update position
         monster.x = new_x
@@ -1006,25 +1191,8 @@ async def move_monster(request: MoveMonsterRequest, token: str):
         await session.commit()
         await session.refresh(monster)
 
-        monster_info = MonsterInfo(
-            id=monster.id,
-            name=monster.name,
-            monster_type=monster.monster_type,
-            str_=monster.str_,
-            dex=monster.dex,
-            con=monster.con,
-            int_=monster.int_,
-            wis=monster.wis,
-            cha=monster.cha,
-            body_fitting_used=monster.body_fitting_used,
-            mind_fitting_used=monster.mind_fitting_used,
-            current_zone_id=monster.current_zone_id,
-            x=monster.x,
-            y=monster.y
-        )
-
         return MoveResult(
-            monster=monster_info,
+            monster=monster_to_info(monster),
             pushed_item=pushed_item_name,
             deposit=deposit_info
         )
@@ -1223,6 +1391,14 @@ async def interact(request: InteractRequest, token: str):
 class SelectRecipeRequest(BaseModel):
     workshop_id: str
     recipe_id: int
+    monster_id: str  # Monster doing the crafting (for skill learning)
+
+
+class SkillGainInfo(BaseModel):
+    """Info about skill gained during crafting."""
+    skill: str
+    gain: float
+    new_level: float
 
 
 class CraftingStatus(BaseModel):
@@ -1233,8 +1409,11 @@ class CraftingStatus(BaseModel):
     progress: float = 0.0  # 0.0 to 1.0
     time_remaining: Optional[int] = None  # In game seconds
     input_items: list = []
+    tool_items: list = []  # Tools with durability info
     missing_inputs: list = []
     missing_tools: list = []
+    depleted_tools: list = []  # Tools that ran out of durability
+    skill_gained: Optional[SkillGainInfo] = None  # Skill learned on completion
 
 
 class SelectRecipeResponse(BaseModel):
@@ -1294,9 +1473,20 @@ async def select_recipe(workshop_id: str, request: SelectRecipeRequest, token: s
             if not found:
                 missing_inputs.append(tag_group)
 
-        # Check required tools (simplified - tools not yet implemented)
+        # Check required tools
         required_tools = recipe.tools_required_tags or []
-        missing_tools = list(required_tools)  # For now, all tools are "missing"
+        tool_items = workshop_metadata.get('tool_items', [])
+        missing_tools = []
+        for required_tag in required_tools:
+            # Check if any tool in workshop has this tag
+            found = False
+            for tool in tool_items:
+                tool_tags = tool.get('tool_tags', [])
+                if required_tag in tool_tags:
+                    found = True
+                    break
+            if not found:
+                missing_tools.append(required_tag)
 
         # Update workshop metadata with selected recipe
         workshop_metadata['selected_recipe_id'] = recipe.id
@@ -1309,6 +1499,8 @@ async def select_recipe(workshop_id: str, request: SelectRecipeRequest, token: s
             workshop_metadata['is_crafting'] = True
             workshop_metadata['crafting_started_at'] = datetime.utcnow().isoformat()
             workshop_metadata['crafting_duration'] = recipe.production_time
+            workshop_metadata['crafter_monster_id'] = request.monster_id  # Track who's crafting
+            workshop_metadata['primary_applied_skill'] = recipe.primary_applied_skill  # Skill to learn
             message = f"Started crafting {recipe.name}!"
         else:
             workshop_metadata['is_crafting'] = False
@@ -1404,11 +1596,61 @@ async def get_workshop_status(workshop_id: str, token: str):
                     )
                     session.add(output_item)
 
+                    # Skill learning: improve monster's applied skill
+                    crafter_id = workshop_metadata.get('crafter_monster_id')
+                    primary_skill = workshop_metadata.get('primary_applied_skill')
+                    if crafter_id and primary_skill:
+                        crafter_result = await session.execute(
+                            select(Monster).where(Monster.id == crafter_id)
+                        )
+                        crafter = crafter_result.scalar_one_or_none()
+                        if crafter:
+                            applied_skills = crafter.applied_skills or {}
+                            current_skill_level = applied_skills.get(primary_skill, 0.0)
+
+                            # Calculate skill gain: base 0.01, modified by INT
+                            # INT bonus: (INT - 10) / 100 (so INT 18 = +0.08 bonus)
+                            int_bonus = (crafter.int_ - 10) / 100
+                            skill_gain = 0.01 + max(0, int_bonus)  # Min 0.01, bonus from INT
+
+                            # Apply skill gain (cap at 1.0)
+                            new_skill_level = min(1.0, current_skill_level + skill_gain)
+                            applied_skills[primary_skill] = round(new_skill_level, 3)
+
+                            crafter.applied_skills = applied_skills
+                            flag_modified(crafter, 'applied_skills')
+
+                            # Store skill gain info for feedback
+                            workshop_metadata['last_skill_gained'] = {
+                                'skill': primary_skill,
+                                'gain': round(skill_gain, 3),
+                                'new_level': round(new_skill_level, 3)
+                            }
+
+                    # Consume tool durability
+                    tool_items = workshop_metadata.get('tool_items', [])
+                    depleted_tools = []
+                    for tool in tool_items:
+                        if tool.get('durability', 0) > 0:
+                            tool['durability'] -= 1
+                            if tool['durability'] <= 0:
+                                depleted_tools.append(tool['name'])
+
+                    # Remove depleted tools
+                    workshop_metadata['tool_items'] = [
+                        t for t in tool_items if t.get('durability', 0) > 0
+                    ]
+
                     # Clear crafting state and consumed inputs
                     workshop_metadata['is_crafting'] = False
                     workshop_metadata['crafting_completed_at'] = datetime.utcnow().isoformat()
                     workshop_metadata['input_items'] = []  # Clear consumed ingredients
                     workshop_metadata.pop('crafting_started_at', None)
+
+                    # Track depleted tools for feedback
+                    if depleted_tools:
+                        workshop_metadata['last_depleted_tools'] = depleted_tools
+
                     workshop.entity_metadata = workshop_metadata
                     flag_modified(workshop, 'entity_metadata')
 
@@ -1417,6 +1659,25 @@ async def get_workshop_status(workshop_id: str, token: str):
                     progress = 1.0
                     time_remaining = 0
 
+        # Get depleted tools and skill gain from last crafting and clear
+        depleted_tools = workshop_metadata.get('last_depleted_tools', [])
+        skill_gained_data = workshop_metadata.get('last_skill_gained')
+        skill_gained = None
+        if skill_gained_data:
+            skill_gained = SkillGainInfo(
+                skill=skill_gained_data['skill'],
+                gain=skill_gained_data['gain'],
+                new_level=skill_gained_data['new_level']
+            )
+
+        # Clear one-time feedback after returning
+        if (depleted_tools or skill_gained_data) and not workshop_metadata.get('is_crafting'):
+            workshop_metadata.pop('last_depleted_tools', None)
+            workshop_metadata.pop('last_skill_gained', None)
+            workshop.entity_metadata = workshop_metadata
+            flag_modified(workshop, 'entity_metadata')
+            await session.commit()
+
         return CraftingStatus(
             is_crafting=workshop_metadata.get('is_crafting', False),
             recipe_id=recipe_id,
@@ -1424,8 +1685,11 @@ async def get_workshop_status(workshop_id: str, token: str):
             progress=progress,
             time_remaining=time_remaining,
             input_items=workshop_metadata.get('input_items', []),
+            tool_items=workshop_metadata.get('tool_items', []),
             missing_inputs=[],
-            missing_tools=[]
+            missing_tools=[],
+            depleted_tools=depleted_tools,
+            skill_gained=skill_gained
         )
 
 
@@ -1474,7 +1738,9 @@ async def switch_monster(request: SwitchMonsterRequest, token: str):
             mind_fitting_used=monster.mind_fitting_used,
             current_zone_id=monster.current_zone_id,
             x=monster.x,
-            y=monster.y
+            y=monster.y,
+            transferable_skills=monster.transferable_skills or [],
+            applied_skills=monster.applied_skills or {}
         )
 
 
@@ -1813,8 +2079,10 @@ async def autorepeat_step(request: StartAutorepeatRequest, token: str):
         direction = action.get('direction')
 
         result_message = f"Executed action {current_index + 1}/{len(recorded_sequence)}: {action_type}"
+        autorepeat_stopped = False
+        stop_reason = None
 
-        # Execute the action
+        # Execute the action based on type
         if action_type == 'move' and direction:
             # Calculate new position
             new_x, new_y = monster.x, monster.y
@@ -1827,24 +2095,141 @@ async def autorepeat_step(request: StartAutorepeatRequest, token: str):
             elif direction == "right":
                 new_x += 1
 
-            # Update position (simplified - no collision check for autorepeat)
+            # Update position
             monster.x = new_x
             monster.y = new_y
             result_message += f" {direction} -> ({new_x}, {new_y})"
 
-        # Increment index
-        current_task['current_action_index'] = current_index + 1
+        elif action_type == 'push' and direction:
+            # For push actions, check if there's an item to push
+            # Calculate target position (where the item should be)
+            target_x, target_y = monster.x, monster.y
+            if direction == "up":
+                target_y -= 1
+            elif direction == "down":
+                target_y += 1
+            elif direction == "left":
+                target_x -= 1
+            elif direction == "right":
+                target_x += 1
+
+            # Check if there's an item at target position
+            item_result = await session.execute(
+                select(Entity).where(
+                    Entity.zone_id == monster.current_zone_id,
+                    Entity.x == target_x,
+                    Entity.y == target_y,
+                    Entity.entity_type == "item"
+                )
+            )
+            item_at_target = item_result.scalars().first()  # Use first() to handle multiple items
+
+            if item_at_target:
+                # There's an item - push it and move monster
+                push_x, push_y = target_x, target_y
+                if direction == "up":
+                    push_y -= 1
+                elif direction == "down":
+                    push_y += 1
+                elif direction == "left":
+                    push_x -= 1
+                elif direction == "right":
+                    push_x += 1
+
+                # Move item
+                item_at_target.x = push_x
+                item_at_target.y = push_y
+
+                # Move monster to where item was
+                monster.x = target_x
+                monster.y = target_y
+                result_message += f" pushed item {direction} -> monster at ({target_x}, {target_y})"
+            else:
+                # No item to push - stop autorepeat
+                autorepeat_stopped = True
+                stop_reason = "No ingredient available to push. Autorepeat stopped."
+                current_task['is_playing'] = False
+                result_message += f" - FAILED: no item at ({target_x}, {target_y})"
+
+        elif action_type == 'deposit':
+            # Deposit actions happen automatically when pushing into workshop
+            # Just move the monster for now
+            if direction:
+                new_x, new_y = monster.x, monster.y
+                if direction == "up":
+                    new_y -= 1
+                elif direction == "down":
+                    new_y += 1
+                elif direction == "left":
+                    new_x -= 1
+                elif direction == "right":
+                    new_x += 1
+                monster.x = new_x
+                monster.y = new_y
+            result_message += " (deposit action)"
+
+        elif action_type == 'craft':
+            # Crafting action - check if workshop has required tools
+            workshop_id = action.get('workshop_id')
+            if workshop_id:
+                ws_result = await session.execute(
+                    select(Entity).where(Entity.id == workshop_id, Entity.entity_type == "workshop")
+                )
+                workshop = ws_result.scalar_one_or_none()
+                if workshop:
+                    workshop_metadata = workshop.entity_metadata or {}
+                    recipe_id = workshop_metadata.get('selected_recipe_id')
+
+                    # Get recipe to check tool requirements
+                    if recipe_id:
+                        recipe_result = await session.execute(
+                            select(GoodType).where(GoodType.id == recipe_id)
+                        )
+                        recipe = recipe_result.scalar_one_or_none()
+
+                        if recipe and recipe.tools_required_tags:
+                            # Check if workshop has all required tools
+                            tool_items = workshop_metadata.get('tool_items', [])
+                            available_tags = []
+                            for tool in tool_items:
+                                if tool.get('durability', 0) > 0:
+                                    available_tags.extend(tool.get('tool_tags', []))
+
+                            missing_tools = []
+                            for required_tag in recipe.tools_required_tags:
+                                if required_tag not in available_tags:
+                                    missing_tools.append(required_tag)
+
+                            if missing_tools:
+                                # Stop autorepeat - tools depleted
+                                autorepeat_stopped = True
+                                stop_reason = f"Tool depleted: missing {', '.join(missing_tools)}. Autorepeat stopped."
+                                current_task['is_playing'] = False
+                                result_message += f" - FAILED: missing tools {missing_tools}"
+
+            if not autorepeat_stopped:
+                result_message += " (craft action)"
+
+        # Increment index (unless we stopped)
+        if not autorepeat_stopped:
+            current_task['current_action_index'] = current_index + 1
         monster.current_task = current_task
         flag_modified(monster, 'current_task')
         await session.commit()
 
-        return {
+        response = {
             "message": result_message,
             "action": action,
             "current_index": current_index + 1,
             "total_actions": len(recorded_sequence),
             "monster_position": {"x": monster.x, "y": monster.y}
         }
+
+        if autorepeat_stopped:
+            response["stopped"] = True
+            response["stop_reason"] = stop_reason
+
+        return response
 
 
 @app.get("/api/monsters/{monster_id}/autorepeat", response_model=AutorepeatState, tags=["Autorepeat"])
@@ -2138,6 +2523,25 @@ async def seed_recipes():
         return {"message": f"Seeded {len(sample_recipes)} recipes"}
 
 
+@app.patch("/api/debug/recipes/{recipe_id}", tags=["Debug"])
+async def update_recipe(recipe_id: int, primary_applied_skill: str = None):
+    """Update recipe fields (debug only)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(GoodType).where(GoodType.id == recipe_id)
+        )
+        recipe = result.scalar_one_or_none()
+
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+
+        if primary_applied_skill:
+            recipe.primary_applied_skill = primary_applied_skill
+
+        await session.commit()
+        return {"id": recipe.id, "name": recipe.name, "primary_applied_skill": recipe.primary_applied_skill}
+
+
 # Tick engine state
 tick_engine_running = True
 current_tick = 0
@@ -2304,6 +2708,32 @@ async def get_entity(entity_id: str):
         }
 
 
+class UpdateEntityRequest(BaseModel):
+    metadata: dict
+
+
+@app.patch("/api/debug/entities/{entity_id}", tags=["Debug"])
+async def update_entity(entity_id: str, request: UpdateEntityRequest):
+    """Update entity metadata (debug only)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Entity).where(Entity.id == entity_id)
+        )
+        entity = result.scalar_one_or_none()
+
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+
+        entity.entity_metadata = request.metadata
+        flag_modified(entity, 'entity_metadata')
+        await session.commit()
+
+        return {
+            "id": entity.id,
+            "metadata": entity.entity_metadata
+        }
+
+
 @app.get("/api/debug/connections", tags=["Debug"])
 async def get_connections():
     """Get list of connected players."""
@@ -2359,6 +2789,37 @@ async def create_entity(request: CreateEntityRequest):
             "created_at": entity.created_at.isoformat(),
             "updated_at": entity.updated_at.isoformat()
         }
+
+
+@app.post("/api/debug/workshops/{workshop_id}/complete-crafting", tags=["Debug"])
+async def debug_complete_crafting(workshop_id: str):
+    """Debug endpoint to instantly complete crafting in a workshop."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Entity).where(Entity.id == workshop_id)
+        )
+        workshop = result.scalar_one_or_none()
+
+        if not workshop:
+            raise HTTPException(status_code=404, detail="Workshop not found")
+
+        if workshop.entity_type != "workshop":
+            raise HTTPException(status_code=400, detail="Entity is not a workshop")
+
+        workshop_metadata = workshop.entity_metadata or {}
+        if not workshop_metadata.get('is_crafting'):
+            return {"message": "Workshop is not currently crafting"}
+
+        # Set started_at to far in the past to instantly complete
+        from datetime import timedelta
+        past_time = datetime.utcnow() - timedelta(hours=1)
+        workshop_metadata['crafting_started_at'] = past_time.isoformat()
+        workshop.entity_metadata = workshop_metadata
+        flag_modified(workshop, 'entity_metadata')
+
+        await session.commit()
+
+        return {"message": "Crafting time accelerated. Poll status to complete."}
 
 
 # =============================================================================
