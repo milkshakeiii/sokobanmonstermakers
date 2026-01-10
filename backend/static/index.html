@@ -396,6 +396,62 @@
             margin-bottom: 16px;
         }
 
+        /* Skills Selection Styles */
+        .skills-hint {
+            font-size: 0.85rem;
+            color: var(--text-color);
+            opacity: 0.6;
+            margin-bottom: 12px;
+        }
+
+        .skills-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .skill-chip {
+            padding: 8px 12px;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .skill-chip:hover {
+            border-color: var(--highlight-color);
+        }
+
+        .skill-chip.selected {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            color: white;
+        }
+
+        .skill-chip.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .skill-chip.disabled:hover {
+            border-color: var(--border-color);
+        }
+
+        .skills-count {
+            font-size: 0.9rem;
+            color: var(--text-color);
+        }
+
+        .skills-count span {
+            color: var(--highlight-color);
+            font-weight: bold;
+        }
+
         /* My Monsters List */
         .my-monsters {
             margin-top: 20px;
@@ -574,6 +630,181 @@
                 transform: translateX(0);
             }
         }
+
+        /* Game World Screen Styles */
+        #game-screen {
+            width: 100%;
+            height: 100vh;
+            padding: 0;
+        }
+
+        .game-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-color);
+        }
+
+        .game-panel {
+            background-color: var(--panel-bg);
+            border-right: 2px solid var(--border-color);
+            padding: 16px;
+            width: 250px;
+            flex-shrink: 0;
+            overflow-y: auto;
+        }
+
+        .panel-section {
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .panel-section:last-child {
+            border-bottom: none;
+        }
+
+        .panel-section h3 {
+            color: var(--highlight-color);
+            font-size: 1.3rem;
+            margin-bottom: 4px;
+        }
+
+        .panel-section h4 {
+            color: var(--text-color);
+            font-size: 1rem;
+            margin-bottom: 12px;
+            opacity: 0.9;
+        }
+
+        .monster-type-label {
+            color: var(--text-color);
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+
+        .ability-scores {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .ability-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background-color: var(--bg-color);
+            border-radius: 4px;
+        }
+
+        .ability-name {
+            font-weight: bold;
+            color: var(--text-color);
+            font-size: 0.9rem;
+        }
+
+        .ability-value {
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .ability-value.high {
+            color: var(--success-color);
+        }
+
+        .ability-value.medium {
+            color: var(--warning-color);
+        }
+
+        .ability-value.low {
+            color: var(--text-color);
+        }
+
+        .equipment-info, .position-info {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            color: var(--text-color);
+            font-size: 0.9rem;
+        }
+
+        .equipment-row {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .game-viewport {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .viewport-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background-color: var(--panel-bg);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .viewport-header span {
+            color: var(--highlight-color);
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+
+        .viewport-area {
+            flex: 1;
+            background-color: #0d0d15;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+
+        .viewport-placeholder {
+            text-align: center;
+            color: var(--text-color);
+            opacity: 0.6;
+        }
+
+        .viewport-placeholder p {
+            margin: 8px 0;
+        }
+
+        .viewport-placeholder p.small {
+            font-size: 0.85rem;
+            opacity: 0.7;
+        }
+
+        /* Responsive game screen */
+        @media (max-width: 768px) {
+            .game-container {
+                flex-direction: column;
+            }
+
+            .game-panel {
+                width: 100%;
+                border-right: none;
+                border-bottom: 2px solid var(--border-color);
+                max-height: 200px;
+            }
+
+            .ability-scores {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 4px;
+            }
+
+            .ability-row {
+                flex-direction: column;
+                padding: 4px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -669,6 +900,14 @@
                     <label for="monster-name">Monster Name</label>
                     <input type="text" id="monster-name" name="name" required minlength="1" maxlength="100" placeholder="Enter a name for your monster">
                 </div>
+                <div class="form-group">
+                    <label>Transferable Skills (Choose up to 3)</label>
+                    <p class="skills-hint">Skills provide bonuses when crafting related items</p>
+                    <div id="skills-selection" class="skills-grid">
+                        <!-- Skills will be loaded here -->
+                    </div>
+                    <p class="skills-count"><span id="selected-skills-count">0</span>/3 skills selected</p>
+                </div>
                 <button type="submit" class="btn" id="create-monster-btn">Create Monster</button>
             </form>
         </div>
@@ -678,6 +917,86 @@
             <h3>My Monsters</h3>
             <div id="monster-list" class="monster-list">
                 <!-- Player's monsters will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Game World Screen -->
+    <div id="game-screen" class="screen">
+        <div class="game-container">
+            <!-- Left Panel - Monster Info -->
+            <div class="game-panel left-panel">
+                <div class="panel-section">
+                    <h3 id="active-monster-name">Monster Name</h3>
+                    <p id="active-monster-type" class="monster-type-label">Type</p>
+                </div>
+
+                <div class="panel-section">
+                    <h4>Ability Scores</h4>
+                    <div class="ability-scores">
+                        <div class="ability-row">
+                            <span class="ability-name">STR</span>
+                            <span class="ability-value" id="active-str">0</span>
+                        </div>
+                        <div class="ability-row">
+                            <span class="ability-name">DEX</span>
+                            <span class="ability-value" id="active-dex">0</span>
+                        </div>
+                        <div class="ability-row">
+                            <span class="ability-name">CON</span>
+                            <span class="ability-value" id="active-con">0</span>
+                        </div>
+                        <div class="ability-row">
+                            <span class="ability-name">INT</span>
+                            <span class="ability-value" id="active-int">0</span>
+                        </div>
+                        <div class="ability-row">
+                            <span class="ability-name">WIS</span>
+                            <span class="ability-value" id="active-wis">0</span>
+                        </div>
+                        <div class="ability-row">
+                            <span class="ability-name">CHA</span>
+                            <span class="ability-value" id="active-cha">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h4>Equipment</h4>
+                    <div class="equipment-info">
+                        <div class="equipment-row">
+                            <span>Body Fitting:</span>
+                            <span id="active-body-fitting">0/100</span>
+                        </div>
+                        <div class="equipment-row">
+                            <span>Mind Fitting:</span>
+                            <span id="active-mind-fitting">0/100</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h4>Position</h4>
+                    <div class="position-info">
+                        <span id="active-zone">Starting Village</span>
+                        <span id="active-position">(0, 0)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Game Viewport -->
+            <div class="game-viewport">
+                <div class="viewport-header">
+                    <span id="zone-name-display">Starting Village</span>
+                    <button class="btn btn-secondary btn-small" id="back-to-monsters-btn">Change Monster</button>
+                </div>
+                <div class="viewport-area" id="viewport-area">
+                    <div class="viewport-placeholder">
+                        <p>Game World</p>
+                        <p class="small">Monster is ready for adventure!</p>
+                        <p class="small">Use WASD or Arrow keys to move</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -695,6 +1014,9 @@
         let monsterTypes = [];
         let selectedMonsterType = null;
         let myMonsters = [];
+        let activeMonster = null;  // Currently selected/controlled monster
+        let availableSkills = [];  // List of all transferable skills
+        let selectedSkills = [];   // Currently selected skills for new monster (max 3)
 
         // Toast notification system
         const toastContainer = document.getElementById('toast-container');
@@ -745,6 +1067,7 @@
         // DOM Elements - Auth
         const authScreen = document.getElementById('auth-screen');
         const monsterScreen = document.getElementById('monster-screen');
+        const gameScreen = document.getElementById('game-screen');
         const tabRegister = document.getElementById('tab-register');
         const tabLogin = document.getElementById('tab-login');
         const registerSection = document.getElementById('register-section');
@@ -831,10 +1154,79 @@
         // Show monster screen
         function showMonsterScreen() {
             authScreen.classList.remove('active');
+            gameScreen.classList.remove('active');
             monsterScreen.classList.add('active');
             loadMonsterTypes();
             loadMyMonsters();
+            loadTransferableSkills();
             updateHeader();
+        }
+
+        // Show game screen with selected monster
+        function showGameScreen() {
+            if (!activeMonster) {
+                showToast('No monster selected', 'error');
+                return;
+            }
+
+            authScreen.classList.remove('active');
+            monsterScreen.classList.remove('active');
+            gameScreen.classList.add('active');
+            updateMonsterPanel();
+        }
+
+        // Update monster panel in game screen
+        function updateMonsterPanel() {
+            if (!activeMonster) return;
+
+            const monster = activeMonster;
+
+            // Update name and type
+            document.getElementById('active-monster-name').textContent = monster.name;
+            document.getElementById('active-monster-type').textContent = monster.monster_type;
+
+            // Update ability scores with color coding
+            const stats = [
+                { id: 'active-str', value: monster.str_ },
+                { id: 'active-dex', value: monster.dex },
+                { id: 'active-con', value: monster.con },
+                { id: 'active-int', value: monster.int_ },
+                { id: 'active-wis', value: monster.wis },
+                { id: 'active-cha', value: monster.cha }
+            ];
+
+            stats.forEach(stat => {
+                const element = document.getElementById(stat.id);
+                element.textContent = stat.value;
+                element.className = 'ability-value ' + getStatClass(stat.value);
+            });
+
+            // Update equipment info (get caps from monster type)
+            const monsterType = monsterTypes.find(t => t.name === monster.monster_type);
+            const bodyCap = monsterType ? monsterType.body_cap : 100;
+            const mindCap = monsterType ? monsterType.mind_cap : 100;
+            document.getElementById('active-body-fitting').textContent = `${monster.body_fitting_used}/${bodyCap}`;
+            document.getElementById('active-mind-fitting').textContent = `${monster.mind_fitting_used}/${mindCap}`;
+
+            // Update position
+            document.getElementById('active-position').textContent = `(${monster.x}, ${monster.y})`;
+            document.getElementById('active-zone').textContent = monster.current_zone_id ? 'Starting Village' : 'Starting Village';
+            document.getElementById('zone-name-display').textContent = 'Starting Village';
+        }
+
+        // Select and enter game with a monster
+        async function selectMonster(monsterId) {
+            try {
+                const result = await apiCall(`/api/monsters/switch?token=${authToken}`, 'POST', {
+                    monster_id: monsterId
+                });
+
+                activeMonster = result;
+                showToast(`Now controlling ${result.name}!`, 'success');
+                showGameScreen();
+            } catch (err) {
+                showToast('Failed to select monster: ' + err.message, 'error');
+            }
         }
 
         // Update header with user info
@@ -861,6 +1253,57 @@
             } catch (err) {
                 showMessage(monsterMessage, 'Failed to load monster types: ' + err.message, true);
             }
+        }
+
+        // Load transferable skills
+        async function loadTransferableSkills() {
+            try {
+                const data = await apiCall('/api/monsters/skills');
+                availableSkills = data.skills;
+                renderSkillsSelection();
+            } catch (err) {
+                console.error('Failed to load skills:', err);
+            }
+        }
+
+        // Render skills selection grid
+        function renderSkillsSelection() {
+            const skillsContainer = document.getElementById('skills-selection');
+            skillsContainer.innerHTML = availableSkills.map(skill => {
+                const isSelected = selectedSkills.includes(skill);
+                const isDisabled = !isSelected && selectedSkills.length >= 3;
+                return `
+                    <div class="skill-chip ${isSelected ? 'selected' : ''} ${isDisabled ? 'disabled' : ''}"
+                         data-skill="${skill}">
+                        ${skill}
+                    </div>
+                `;
+            }).join('');
+
+            // Add click handlers
+            skillsContainer.querySelectorAll('.skill-chip').forEach(chip => {
+                chip.addEventListener('click', () => toggleSkill(chip.dataset.skill));
+            });
+
+            // Update count
+            document.getElementById('selected-skills-count').textContent = selectedSkills.length;
+        }
+
+        // Toggle skill selection
+        function toggleSkill(skillName) {
+            const index = selectedSkills.indexOf(skillName);
+            if (index > -1) {
+                // Remove skill
+                selectedSkills.splice(index, 1);
+            } else if (selectedSkills.length < 3) {
+                // Add skill (if under limit)
+                selectedSkills.push(skillName);
+            } else {
+                // Already at max
+                showToast('You can only select up to 3 skills', 'error');
+                return;
+            }
+            renderSkillsSelection();
         }
 
         // Render monster type cards
@@ -921,7 +1364,9 @@
         // Select a monster type
         function selectMonsterType(typeName) {
             selectedMonsterType = typeName;
+            selectedSkills = [];  // Reset selected skills when changing monster type
             renderMonsterTypes();
+            renderSkillsSelection();
 
             const type = monsterTypes.find(t => t.name === typeName);
             if (type) {
@@ -958,9 +1403,14 @@
                         <h4>${monster.name}</h4>
                         <span>${monster.monster_type} - STR ${monster.str_}, DEX ${monster.dex}, CON ${monster.con}, INT ${monster.int_}, WIS ${monster.wis}, CHA ${monster.cha}</span>
                     </div>
-                    <button class="btn btn-secondary btn-small" disabled>Select</button>
+                    <button class="btn btn-secondary btn-small select-monster-btn" data-monster-id="${monster.id}">Select</button>
                 </div>
             `).join('');
+
+            // Add click handlers for Select buttons
+            document.querySelectorAll('.select-monster-btn').forEach(btn => {
+                btn.addEventListener('click', () => selectMonster(btn.dataset.monsterId));
+            });
         }
 
         // Create monster form submission
@@ -996,15 +1446,18 @@
             try {
                 const monster = await apiCall(`/api/monsters?token=${authToken}`, 'POST', {
                     monster_type: selectedMonsterType,
-                    name: name
+                    name: name,
+                    transferable_skills: selectedSkills
                 });
 
                 showMessage(monsterMessage, `${monster.name} the ${monster.monster_type} has been created!`);
 
                 // Reset form
                 selectedMonsterType = null;
+                selectedSkills = [];
                 document.getElementById('monster-name').value = '';
                 createMonsterForm.style.display = 'none';
+                renderSkillsSelection();
 
                 // Refresh user info (for updated renown) and monsters list
                 const user = await apiCall(`/api/auth/me?token=${authToken}`);
@@ -1118,6 +1571,11 @@
         }
 
         headerLogoutBtn.addEventListener('click', logout);
+
+        // Back to monster selection from game screen
+        document.getElementById('back-to-monsters-btn').addEventListener('click', () => {
+            showMonsterScreen();
+        });
 
         // Initial check
         checkAuth();

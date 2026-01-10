@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import init_db, get_session, async_session
 from models.player import Player, Session, Commune
-from models.monster import Monster, MONSTER_TYPES
+from models.monster import Monster, MONSTER_TYPES, TRANSFERABLE_SKILLS
 from models.zone import Zone, Entity
 
 
@@ -424,6 +424,12 @@ async def get_monster_types():
     ]
 
 
+@app.get("/api/monsters/skills", tags=["Monsters"])
+async def get_transferable_skills():
+    """Get all available transferable skills that can be chosen at monster creation."""
+    return {"skills": TRANSFERABLE_SKILLS}
+
+
 @app.get("/api/monsters", response_model=list[MonsterInfo], tags=["Monsters"])
 async def get_player_monsters(token: str):
     """Get all monsters belonging to the current player's commune."""
@@ -477,6 +483,28 @@ async def create_monster(request: CreateMonsterRequest, token: str):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid monster type. Must be one of: {', '.join(MONSTER_TYPES.keys())}"
+            )
+
+        # Validate transferable skills
+        if len(request.transferable_skills) > 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot select more than 3 transferable skills"
+            )
+
+        # Check for invalid skills
+        invalid_skills = [s for s in request.transferable_skills if s not in TRANSFERABLE_SKILLS]
+        if invalid_skills:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid transferable skills: {', '.join(invalid_skills)}"
+            )
+
+        # Check for duplicate skills
+        if len(request.transferable_skills) != len(set(request.transferable_skills)):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot select the same skill twice"
             )
 
         # Get player's commune

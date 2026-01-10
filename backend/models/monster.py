@@ -73,6 +73,29 @@ class Monster(Base):
         return 0
 
 
+# Transferable skills that can be chosen at monster creation
+# Based on MonsterMakers economy - these are skills that provide bonuses to crafting
+TRANSFERABLE_SKILLS = [
+    "Weaving",
+    "Dyeing",
+    "Pottery",
+    "Smithing",
+    "Carpentry",
+    "Cooking",
+    "Mining",
+    "Farming",
+    "Fishing",
+    "Hunting",
+    "Tailoring",
+    "Leatherworking",
+    "Glassblowing",
+    "Jewelcrafting",
+    "Alchemy",
+    "Brewing",
+    "Masonry",
+    "Woodcutting",
+]
+
 # Monster type definitions
 MONSTER_TYPES = {
     "Cyclops": {
