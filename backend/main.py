@@ -873,6 +873,59 @@ async def create_monster(request: CreateMonsterRequest, token: str):
         )
 
 
+class DeleteMonsterResponse(BaseModel):
+    message: str
+    monster_id: str
+    monster_name: str
+
+
+@app.delete("/api/monsters/{monster_id}", response_model=DeleteMonsterResponse, tags=["Monsters"])
+async def delete_monster(monster_id: str, token: str):
+    """Delete a monster from the player's commune.
+
+    This permanently removes the monster from:
+    - The monster list
+    - The zone (if currently in one)
+    - The database
+    """
+    async with async_session() as session:
+        player = await get_current_player(token, session)
+
+        # Get the monster
+        result = await session.execute(
+            select(Monster).where(Monster.id == monster_id)
+        )
+        monster = result.scalar_one_or_none()
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="Monster not found")
+
+        # Verify ownership through commune
+        result = await session.execute(
+            select(Commune).where(Commune.player_id == player.id)
+        )
+        commune = result.scalar_one_or_none()
+
+        if not commune or monster.commune_id != commune.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only delete monsters belonging to your commune"
+            )
+
+        # Store name for response before deletion
+        monster_name = monster.name
+
+        # Delete the monster
+        await session.delete(monster)
+        await session.commit()
+
+        return DeleteMonsterResponse(
+            message=f"Monster '{monster_name}' has been deleted",
+            monster_id=monster_id,
+            monster_name=monster_name
+        )
+
+
 class MoveMonsterRequest(BaseModel):
     monster_id: str
     direction: str  # up, down, left, right

@@ -462,6 +462,39 @@
             margin-bottom: 16px;
         }
 
+        .search-container {
+            margin-bottom: 16px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 12px;
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-color);
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--highlight-color);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-color);
+            opacity: 0.5;
+        }
+
+        .no-results-message {
+            color: var(--text-color);
+            opacity: 0.7;
+            text-align: center;
+            padding: 20px;
+            font-style: italic;
+        }
+
         .monster-list {
             display: flex;
             flex-direction: column;
@@ -503,6 +536,21 @@
             width: auto;
             padding: 8px 16px;
             font-size: 0.9rem;
+        }
+
+        .btn-danger {
+            background-color: #8B0000;
+            color: #FFFFFF;
+        }
+
+        .btn-danger:hover {
+            background-color: #a52a2a;
+        }
+
+        .monster-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
         }
 
         .header-bar {
@@ -1783,6 +1831,9 @@
         <!-- My Monsters -->
         <div id="my-monsters" class="my-monsters">
             <h3>My Monsters</h3>
+            <div class="search-container">
+                <input type="text" id="monster-search" class="search-input" placeholder="Search monsters by name...">
+            </div>
             <div id="monster-list" class="monster-list">
                 <!-- Player's monsters will be loaded here -->
             </div>
@@ -1950,6 +2001,7 @@
         let monsterTypes = [];
         let selectedMonsterType = null;
         let myMonsters = [];
+        let monsterSearchTerm = '';  // Current search term for monster list
         let activeMonster = null;  // Currently selected/controlled monster
         let availableSkills = [];  // List of all transferable skills
         let selectedSkills = [];   // Currently selected skills for new monster (max 3)
@@ -2130,7 +2182,14 @@
         const newMonsterForm = document.getElementById('new-monster-form');
         const monsterMessage = document.getElementById('monster-message');
         const monsterList = document.getElementById('monster-list');
+        const monsterSearchInput = document.getElementById('monster-search');
         const headerLogoutBtn = document.getElementById('header-logout-btn');
+
+        // Monster search input handler
+        monsterSearchInput.addEventListener('input', (e) => {
+            monsterSearchTerm = e.target.value;
+            renderMyMonsters();
+        });
 
         // Tab switching
         function switchTab(tab) {
@@ -2498,20 +2557,42 @@
             }
         }
 
-        // Render player's monsters
+        // Render player's monsters (with search filtering)
         function renderMyMonsters() {
             if (myMonsters.length === 0) {
                 monsterList.innerHTML = '<p style="color: var(--text-color); opacity: 0.7;">No monsters yet. Create one above!</p>';
                 return;
             }
 
-            monsterList.innerHTML = myMonsters.map(monster => `
+            // Filter monsters based on search term
+            const searchLower = monsterSearchTerm.toLowerCase().trim();
+            const filteredMonsters = searchLower
+                ? myMonsters.filter(monster =>
+                    monster.name.toLowerCase().includes(searchLower) ||
+                    monster.monster_type.toLowerCase().includes(searchLower)
+                  )
+                : myMonsters;
+
+            // Show "no results found" message if search returns empty
+            if (filteredMonsters.length === 0) {
+                monsterList.innerHTML = `
+                    <div class="no-results-message">
+                        No monsters found matching "${monsterSearchTerm}"
+                    </div>
+                `;
+                return;
+            }
+
+            monsterList.innerHTML = filteredMonsters.map(monster => `
                 <div class="owned-monster">
                     <div class="owned-monster-info">
                         <h4>${monster.name}</h4>
                         <span>${monster.monster_type} - STR ${monster.str_}, DEX ${monster.dex}, CON ${monster.con}, INT ${monster.int_}, WIS ${monster.wis}, CHA ${monster.cha}</span>
                     </div>
-                    <button class="btn btn-secondary btn-small select-monster-btn" data-monster-id="${monster.id}">Select</button>
+                    <div class="monster-actions">
+                        <button class="btn btn-secondary btn-small select-monster-btn" data-monster-id="${monster.id}">Select</button>
+                        <button class="btn btn-danger btn-small delete-monster-btn" data-monster-id="${monster.id}" data-monster-name="${monster.name}">Delete</button>
+                    </div>
                 </div>
             `).join('');
 
@@ -2519,6 +2600,36 @@
             document.querySelectorAll('.select-monster-btn').forEach(btn => {
                 btn.addEventListener('click', () => selectMonster(btn.dataset.monsterId));
             });
+
+            // Add click handlers for Delete buttons
+            document.querySelectorAll('.delete-monster-btn').forEach(btn => {
+                btn.addEventListener('click', () => deleteMonster(btn.dataset.monsterId, btn.dataset.monsterName));
+            });
+        }
+
+        // Delete monster function
+        async function deleteMonster(monsterId, monsterName) {
+            if (!confirm(`Are you sure you want to delete "${monsterName}"? This action cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const result = await apiCall(`/api/monsters/${monsterId}?token=${authToken}`, 'DELETE');
+                showToast(`${monsterName} has been deleted`);
+
+                // Refresh the monster list
+                await loadMyMonsters();
+
+                // If the deleted monster was the active one, clear it
+                if (activeMonster && activeMonster.id === monsterId) {
+                    activeMonster = null;
+                    // Go back to monster selection screen
+                    document.getElementById('monster-screen').classList.add('active');
+                    document.getElementById('game-screen').classList.remove('active');
+                }
+            } catch (err) {
+                showToast(`Failed to delete monster: ${err.message}`, true);
+            }
         }
 
         // Create monster form submission
