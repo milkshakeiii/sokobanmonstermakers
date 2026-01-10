@@ -837,7 +837,7 @@
             color: var(--text-color);
         }
 
-        .equipment-info, .position-info {
+        .equipment-info, .position-info, .created-info {
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -1852,6 +1852,13 @@
                 </div>
 
                 <div class="panel-section">
+                    <h4>Created</h4>
+                    <div class="created-info">
+                        <span id="active-created-at">-</span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
                     <h4>Transferable Skills</h4>
                     <div id="transferable-skills-display" class="skills-display">
                         <span class="no-skills">None selected</span>
@@ -2256,6 +2263,23 @@
             document.getElementById('active-position').textContent = `(${monster.x}, ${monster.y})`;
             document.getElementById('active-zone').textContent = monster.current_zone_id ? 'Starting Village' : 'Starting Village';
             document.getElementById('zone-name-display').textContent = 'Starting Village';
+
+            // Update created_at timestamp in user's local timezone
+            const createdAtElement = document.getElementById('active-created-at');
+            if (monster.created_at) {
+                const createdDate = new Date(monster.created_at);
+                // Format in user's local timezone
+                createdAtElement.textContent = createdDate.toLocaleString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZoneName: 'short'
+                });
+            } else {
+                createdAtElement.textContent = '-';
+            }
 
             // Update transferable skills display
             const transferableSkillsDiv = document.getElementById('transferable-skills-display');

@@ -140,6 +140,7 @@ class MonsterInfo(BaseModel):
     y: int
     transferable_skills: list[str] = []
     applied_skills: dict = {}
+    created_at: Optional[str] = None  # ISO timestamp for display
 
 
 class DepositInfo(BaseModel):
@@ -1047,7 +1048,8 @@ def monster_to_info(monster: Monster, apply_skill_decay: bool = True) -> Monster
         x=monster.x,
         y=monster.y,
         transferable_skills=monster.transferable_skills or [],
-        applied_skills=applied_skills
+        applied_skills=applied_skills,
+        created_at=monster.created_at.isoformat() if monster.created_at else None
     )
 
 
