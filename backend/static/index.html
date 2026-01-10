@@ -631,6 +631,122 @@
             }
         }
 
+        /* Recipe Popup Styles */
+        .recipe-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: var(--dark-background);
+            border: 2px solid var(--highlight-color);
+            border-radius: 8px;
+            padding: 20px;
+            z-index: 1001;
+            min-width: 300px;
+            max-width: 500px;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            display: none;
+        }
+
+        .recipe-popup.active {
+            display: block;
+        }
+
+        .recipe-popup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        .recipe-popup-header h3 {
+            margin: 0;
+            color: var(--highlight-color);
+        }
+
+        .recipe-popup-close {
+            background: none;
+            border: none;
+            color: var(--text-color);
+            cursor: pointer;
+            font-size: 1.5rem;
+            padding: 0;
+            opacity: 0.7;
+        }
+
+        .recipe-popup-close:hover {
+            opacity: 1;
+            color: var(--error-color);
+        }
+
+        .recipe-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .recipe-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 8px;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .recipe-item:hover {
+            background-color: rgba(100, 200, 255, 0.2);
+        }
+
+        .recipe-number {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            line-height: 24px;
+            text-align: center;
+            background-color: var(--highlight-color);
+            color: var(--dark-background);
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 12px;
+        }
+
+        .recipe-name {
+            flex: 1;
+            color: var(--text-color);
+        }
+
+        .recipe-time {
+            color: var(--secondary-text);
+            font-size: 0.85rem;
+        }
+
+        .recipe-popup-hint {
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: var(--secondary-text);
+            text-align: center;
+        }
+
+        .popup-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: none;
+        }
+
+        .popup-overlay.active {
+            display: block;
+        }
+
         /* Game World Screen Styles */
         #game-screen {
             width: 100%;
@@ -823,6 +939,31 @@
             color: #654321;  /* Darker brown for workshop interior */
         }
 
+        /* Deposit flash effect */
+        .deposit-flash {
+            position: absolute;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0%, rgba(100, 200, 255, 0.8) 50%, rgba(100, 200, 255, 0) 100%);
+            border-radius: 2px;
+            animation: deposit-flash-animation 0.5s ease-out forwards;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        @keyframes deposit-flash-animation {
+            0% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.8;
+                transform: scale(1.5);
+            }
+            100% {
+                opacity: 0;
+                transform: scale(2);
+            }
+        }
+
         /* Responsive game screen */
         @media (max-width: 768px) {
             .game-container {
@@ -852,6 +993,19 @@
 <body>
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Recipe Popup -->
+    <div id="popup-overlay" class="popup-overlay"></div>
+    <div id="recipe-popup" class="recipe-popup">
+        <div class="recipe-popup-header">
+            <h3 id="recipe-popup-title">Select Recipe</h3>
+            <button class="recipe-popup-close" id="recipe-popup-close">&times;</button>
+        </div>
+        <ul id="recipe-list" class="recipe-list">
+            <!-- Recipe items will be added dynamically -->
+        </ul>
+        <p class="recipe-popup-hint">Press 1-9 to select a recipe, or Escape to close</p>
+    </div>
 
     <div id="auth-screen" class="container narrow screen active">
         <h1>Monster Workshop</h1>
@@ -1631,6 +1785,25 @@
 
         // Keyboard movement handling
         document.addEventListener('keydown', async (e) => {
+            // Handle recipe popup keys first
+            if (recipePopupOpen) {
+                // Number keys 1-9 to select recipe
+                if (e.key >= '1' && e.key <= '9') {
+                    e.preventDefault();
+                    const index = parseInt(e.key) - 1;
+                    selectRecipe(index);
+                    return;
+                }
+                // Escape to close popup
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    hideRecipePopup();
+                    return;
+                }
+                // Block other keys while popup is open
+                return;
+            }
+
             // Only handle movement in game screen
             if (!gameScreen.classList.contains('active') || !activeMonster) {
                 return;
@@ -1683,17 +1856,71 @@
                     direction: direction
                 });
 
-                // Update active monster state
-                activeMonster = result;
+                // Update active monster state (result now has monster field)
+                activeMonster = result.monster;
                 updateMonsterPanel();
 
                 // Reload zone entities and re-render viewport (items may have moved)
                 await loadZoneData();
                 renderViewport();
+
+                // Check if an item was deposited into a workshop
+                if (result.deposit) {
+                    showDepositFlash(result.deposit.slot_x, result.deposit.slot_y);
+                    showToast(`Deposited ${result.deposit.item_name} into ${result.deposit.workshop_name}!`, 'success');
+                }
             } catch (err) {
                 showToast('Move failed: ' + err.message, 'error');
             }
         }
+
+        // Show flash effect at a grid position when an item is deposited
+        function showDepositFlash(worldX, worldY) {
+            // Calculate screen position based on camera
+            const monsterX = activeMonster.x;
+            const monsterY = activeMonster.y;
+
+            let cameraX = monsterX - Math.floor(VIEWPORT_WIDTH / 2);
+            let cameraY = monsterY - Math.floor(VIEWPORT_HEIGHT / 2);
+
+            const zoneWidth = 100;
+            const zoneHeight = 100;
+            cameraX = Math.max(0, Math.min(cameraX, zoneWidth - VIEWPORT_WIDTH));
+            cameraY = Math.max(0, Math.min(cameraY, zoneHeight - VIEWPORT_HEIGHT));
+
+            // Screen position
+            const screenX = worldX - cameraX;
+            const screenY = worldY - cameraY;
+
+            // Only show flash if position is visible
+            if (screenX >= 0 && screenX < VIEWPORT_WIDTH && screenY >= 0 && screenY < VIEWPORT_HEIGHT) {
+                const viewportArea = document.getElementById('viewport-area');
+                const asciiViewport = viewportArea.querySelector('.ascii-viewport');
+                if (!asciiViewport) return;
+
+                // Create a flash overlay
+                const flash = document.createElement('div');
+                flash.className = 'deposit-flash';
+                flash.style.left = `${screenX * 8}px`;  // 8px per character width
+                flash.style.top = `${screenY * 16}px`;  // 16px per line height
+                flash.style.width = '8px';
+                flash.style.height = '16px';
+
+                asciiViewport.style.position = 'relative';
+                asciiViewport.appendChild(flash);
+
+                // Remove after animation
+                setTimeout(() => {
+                    if (flash.parentNode) {
+                        flash.parentNode.removeChild(flash);
+                    }
+                }, 500);
+            }
+        }
+
+        // Current recipes displayed in popup
+        let currentRecipes = [];
+        let recipePopupOpen = false;
 
         // Interact with adjacent entity (signpost, workshop, etc.)
         async function interactWithEntity() {
@@ -1704,11 +1931,9 @@
                     monster_id: activeMonster.id
                 });
 
-                // Show message
-                showToast(result.message, result.action ? 'success' : 'info');
-
                 // Handle zone transition
                 if (result.action === 'zone_transition') {
+                    showToast(result.message, 'success');
                     // Update monster state with new zone
                     activeMonster.current_zone_id = result.new_zone_id;
                     activeMonster.x = result.new_x;
@@ -1723,10 +1948,78 @@
                     await loadZoneData();
                     renderViewport();
                 }
+                // Handle workshop menu
+                else if (result.action === 'workshop_menu') {
+                    if (result.recipes && result.recipes.length > 0) {
+                        showRecipePopup(result.entity_name, result.recipes);
+                    } else {
+                        showToast(result.message, 'info');
+                    }
+                }
+                // Other interactions
+                else {
+                    showToast(result.message, result.action ? 'success' : 'info');
+                }
             } catch (err) {
                 showToast('Interaction failed: ' + err.message, 'error');
             }
         }
+
+        // Show recipe selection popup
+        function showRecipePopup(workshopName, recipes) {
+            currentRecipes = recipes;
+            recipePopupOpen = true;
+
+            document.getElementById('recipe-popup-title').textContent = workshopName;
+
+            const recipeList = document.getElementById('recipe-list');
+            recipeList.innerHTML = recipes.map((recipe, index) => {
+                const timeInSeconds = recipe.production_time;
+                const timeStr = timeInSeconds >= 60
+                    ? `${Math.floor(timeInSeconds / 60)}m ${timeInSeconds % 60}s`
+                    : `${timeInSeconds}s`;
+                return `
+                    <li class="recipe-item" data-index="${index}">
+                        <span class="recipe-number">${index + 1}</span>
+                        <span class="recipe-name">${recipe.name}</span>
+                        <span class="recipe-time">${timeStr}</span>
+                    </li>
+                `;
+            }).join('');
+
+            // Add click handlers to recipe items
+            recipeList.querySelectorAll('.recipe-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const index = parseInt(item.dataset.index);
+                    selectRecipe(index);
+                });
+            });
+
+            document.getElementById('popup-overlay').classList.add('active');
+            document.getElementById('recipe-popup').classList.add('active');
+        }
+
+        // Hide recipe popup
+        function hideRecipePopup() {
+            recipePopupOpen = false;
+            currentRecipes = [];
+            document.getElementById('popup-overlay').classList.remove('active');
+            document.getElementById('recipe-popup').classList.remove('active');
+        }
+
+        // Select a recipe by index
+        function selectRecipe(index) {
+            if (index >= 0 && index < currentRecipes.length) {
+                const recipe = currentRecipes[index];
+                showToast(`Selected: ${recipe.name}`, 'success');
+                hideRecipePopup();
+                // TODO: Start crafting with this recipe
+            }
+        }
+
+        // Recipe popup close button handler
+        document.getElementById('recipe-popup-close').addEventListener('click', hideRecipePopup);
+        document.getElementById('popup-overlay').addEventListener('click', hideRecipePopup);
 
         // Load zone data (terrain and entities)
         async function loadZoneData() {

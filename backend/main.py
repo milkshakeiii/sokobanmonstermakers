@@ -18,11 +18,12 @@ from pydantic import BaseModel, Field, field_validator
 import bcrypt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from models.database import init_db, get_session, async_session
 from models.player import Player, Session, Commune
 from models.monster import Monster, MONSTER_TYPES, TRANSFERABLE_SKILLS
-from models.zone import Zone, Entity
+from models.zone import Zone, Entity, GoodType
 
 
 # Password hashing functions using bcrypt directly
@@ -136,6 +137,22 @@ class MonsterInfo(BaseModel):
     current_zone_id: Optional[str]
     x: int
     y: int
+
+
+class DepositInfo(BaseModel):
+    """Info about an item deposited into a workshop input slot."""
+    workshop_id: str
+    workshop_name: str
+    item_name: str
+    slot_x: int
+    slot_y: int
+
+
+class MoveResult(BaseModel):
+    """Result of a monster move action, including any push/deposit effects."""
+    monster: MonsterInfo
+    pushed_item: Optional[str] = None  # Item name if an item was pushed
+    deposit: Optional[DepositInfo] = None  # Info if item was deposited into workshop
 
 
 class CreateMonsterRequest(BaseModel):
@@ -632,9 +649,38 @@ def is_terrain_blocked(terrain_data: dict, x: int, y: int) -> bool:
     return False
 
 
-@app.post("/api/monsters/move", response_model=MonsterInfo, tags=["Monsters"])
+def is_workshop_input_slot(workshop: Entity, x: int, y: int) -> bool:
+    """Check if position (x, y) is an input slot of the workshop.
+
+    Input slots are the cells just inside the workshop walls (the first interior row/column).
+    For a 4x4 workshop at (wx, wy), the input slots are at positions like (wx+1, wy+1).
+    """
+    if not workshop or workshop.entity_type != 'workshop':
+        return False
+
+    width = workshop.width or 4
+    height = workshop.height or 4
+
+    # Calculate relative position within workshop
+    rel_x = x - workshop.x
+    rel_y = y - workshop.y
+
+    # Check if inside workshop bounds
+    if rel_x < 0 or rel_y < 0 or rel_x >= width or rel_y >= height:
+        return False
+
+    # Check if on the edge (not an input slot, that's the wall)
+    if rel_x == 0 or rel_x == width - 1 or rel_y == 0 or rel_y == height - 1:
+        return False
+
+    # It's in the interior - consider it an input slot
+    # The spec mentions input/output/tool slots - for now, all interior cells are input slots
+    return True
+
+
+@app.post("/api/monsters/move", response_model=MoveResult, tags=["Monsters"])
 async def move_monster(request: MoveMonsterRequest, token: str):
-    """Move a monster one cell in the specified direction."""
+    """Move a monster one cell in the specified direction. Can push items into workshop input slots."""
     async with async_session() as session:
         player = await get_current_player(token, session)
 
@@ -694,7 +740,7 @@ async def move_monster(request: MoveMonsterRequest, token: str):
         # Boundary checking
         if new_x < 0 or new_y < 0 or new_x >= zone_width or new_y >= zone_height:
             # Can't move outside zone bounds - return current position
-            return MonsterInfo(
+            monster_info = MonsterInfo(
                 id=monster.id,
                 name=monster.name,
                 monster_type=monster.monster_type,
@@ -710,12 +756,13 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 x=monster.x,
                 y=monster.y
             )
+            return MoveResult(monster=monster_info)
 
         # Check terrain collision
         terrain_data = zone.terrain_data if zone else None
         if is_terrain_blocked(terrain_data, new_x, new_y):
             # Can't move into blocked terrain - return current position
-            return MonsterInfo(
+            monster_info = MonsterInfo(
                 id=monster.id,
                 name=monster.name,
                 monster_type=monster.monster_type,
@@ -731,6 +778,11 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 x=monster.x,
                 y=monster.y
             )
+            return MoveResult(monster=monster_info)
+
+        # Initialize push result variables
+        pushed_item_name = None
+        deposit_info = None
 
         # Check for item at target position (for pushing)
         if monster.current_zone_id:
@@ -760,7 +812,7 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                 # 1. Not out of bounds
                 if push_x < 0 or push_y < 0 or push_x >= zone_width or push_y >= zone_height:
                     # Can't push item outside zone
-                    return MonsterInfo(
+                    monster_info = MonsterInfo(
                         id=monster.id,
                         name=monster.name,
                         monster_type=monster.monster_type,
@@ -776,10 +828,11 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                         x=monster.x,
                         y=monster.y
                     )
+                    return MoveResult(monster=monster_info)
 
                 # 2. Not blocked terrain
                 if is_terrain_blocked(terrain_data, push_x, push_y):
-                    return MonsterInfo(
+                    monster_info = MonsterInfo(
                         id=monster.id,
                         name=monster.name,
                         monster_type=monster.monster_type,
@@ -795,39 +848,96 @@ async def move_monster(request: MoveMonsterRequest, token: str):
                         x=monster.x,
                         y=monster.y
                     )
+                    return MoveResult(monster=monster_info)
 
-                # 3. No other item at push destination
+                # 3. Check if push destination is a workshop input slot
                 result = await session.execute(
                     select(Entity).where(
                         Entity.zone_id == monster.current_zone_id,
-                        Entity.x == push_x,
-                        Entity.y == push_y,
-                        Entity.entity_type == "item"
+                        Entity.entity_type == "workshop"
                     )
                 )
-                item_blocking_push = result.scalar_one_or_none()
-                if item_blocking_push:
-                    # Can't push into another item
-                    return MonsterInfo(
-                        id=monster.id,
-                        name=monster.name,
-                        monster_type=monster.monster_type,
-                        str_=monster.str_,
-                        dex=monster.dex,
-                        con=monster.con,
-                        int_=monster.int_,
-                        wis=monster.wis,
-                        cha=monster.cha,
-                        body_fitting_used=monster.body_fitting_used,
-                        mind_fitting_used=monster.mind_fitting_used,
-                        current_zone_id=monster.current_zone_id,
-                        x=monster.x,
-                        y=monster.y
-                    )
+                workshops = result.scalars().all()
 
-                # Push is valid - move the item first
-                item_at_target.x = push_x
-                item_at_target.y = push_y
+                # Find if push destination is inside any workshop
+                target_workshop = None
+                for ws in workshops:
+                    if is_workshop_input_slot(ws, push_x, push_y):
+                        target_workshop = ws
+                        break
+
+                if target_workshop:
+                    # Deposit the item into the workshop
+                    item_metadata = item_at_target.entity_metadata or {}
+                    item_name = item_metadata.get('name', 'Unknown Item')
+                    pushed_item_name = item_name
+
+                    # Update workshop metadata to include the deposited item
+                    workshop_metadata = target_workshop.entity_metadata or {}
+                    if 'input_items' not in workshop_metadata:
+                        workshop_metadata['input_items'] = []
+
+                    workshop_metadata['input_items'].append({
+                        'name': item_name,
+                        'good_type': item_metadata.get('good_type', 'unknown'),
+                        'quality': item_metadata.get('quality', 1),
+                        'deposited_at': datetime.utcnow().isoformat(),
+                        'slot_x': push_x,
+                        'slot_y': push_y
+                    })
+                    target_workshop.entity_metadata = workshop_metadata
+                    # Mark JSON field as modified for SQLAlchemy to detect the change
+                    flag_modified(target_workshop, 'entity_metadata')
+
+                    # Get workshop name
+                    workshop_name = workshop_metadata.get('name', 'Workshop')
+
+                    # Delete the item entity (it's now in the workshop)
+                    await session.delete(item_at_target)
+
+                    deposit_info = DepositInfo(
+                        workshop_id=target_workshop.id,
+                        workshop_name=workshop_name,
+                        item_name=item_name,
+                        slot_x=push_x,
+                        slot_y=push_y
+                    )
+                else:
+                    # 4. No other item at push destination
+                    result = await session.execute(
+                        select(Entity).where(
+                            Entity.zone_id == monster.current_zone_id,
+                            Entity.x == push_x,
+                            Entity.y == push_y,
+                            Entity.entity_type == "item"
+                        )
+                    )
+                    item_blocking_push = result.scalar_one_or_none()
+                    if item_blocking_push:
+                        # Can't push into another item
+                        monster_info = MonsterInfo(
+                            id=monster.id,
+                            name=monster.name,
+                            monster_type=monster.monster_type,
+                            str_=monster.str_,
+                            dex=monster.dex,
+                            con=monster.con,
+                            int_=monster.int_,
+                            wis=monster.wis,
+                            cha=monster.cha,
+                            body_fitting_used=monster.body_fitting_used,
+                            mind_fitting_used=monster.mind_fitting_used,
+                            current_zone_id=monster.current_zone_id,
+                            x=monster.x,
+                            y=monster.y
+                        )
+                        return MoveResult(monster=monster_info)
+
+                    # Push is valid - move the item
+                    item_metadata = item_at_target.entity_metadata or {}
+                    pushed_item_name = item_metadata.get('name', 'Unknown Item')
+                    item_at_target.x = push_x
+                    item_at_target.y = push_y
 
         # Update position
         monster.x = new_x
@@ -835,7 +945,7 @@ async def move_monster(request: MoveMonsterRequest, token: str):
         await session.commit()
         await session.refresh(monster)
 
-        return MonsterInfo(
+        monster_info = MonsterInfo(
             id=monster.id,
             name=monster.name,
             monster_type=monster.monster_type,
@@ -852,9 +962,22 @@ async def move_monster(request: MoveMonsterRequest, token: str):
             y=monster.y
         )
 
+        return MoveResult(
+            monster=monster_info,
+            pushed_item=pushed_item_name,
+            deposit=deposit_info
+        )
+
 
 class InteractRequest(BaseModel):
     monster_id: str
+
+
+class RecipeInfo(BaseModel):
+    id: int
+    name: str
+    production_time: int
+    difficulty_rating: int
 
 
 class InteractResponse(BaseModel):
@@ -866,6 +989,8 @@ class InteractResponse(BaseModel):
     new_y: Optional[int] = None
     entity_type: Optional[str] = None
     entity_name: Optional[str] = None
+    workshop_type: Optional[str] = None
+    recipes: Optional[list[RecipeInfo]] = None
 
 
 @app.post("/api/monsters/interact", response_model=InteractResponse, tags=["Monsters"])
@@ -911,8 +1036,14 @@ async def interact(request: InteractRequest, token: str):
 
         interactable = None
         for entity in entities:
+            # Get entity dimensions (default to 1x1)
+            entity_width = entity.width or 1
+            entity_height = entity.height or 1
+
             for pos in adjacent_positions:
-                if entity.x == pos[0] and entity.y == pos[1]:
+                # Check if position is within entity bounds (for multi-cell entities)
+                if (entity.x <= pos[0] < entity.x + entity_width and
+                    entity.y <= pos[1] < entity.y + entity_height):
                     # Found an entity at or adjacent to monster
                     if entity.entity_type in ['signpost', 'workshop', 'dispenser', 'gathering_spot']:
                         interactable = entity
@@ -975,11 +1106,32 @@ async def interact(request: InteractRequest, token: str):
 
         elif interactable.entity_type == 'workshop':
             metadata = interactable.entity_metadata or {}
+            workshop_type = metadata.get('workshop_type', 'general')
+            workshop_name = metadata.get('name', 'Workshop')
+
+            # Fetch recipes for this workshop type
+            result = await session.execute(
+                select(GoodType).where(GoodType.requires_workshop == workshop_type)
+            )
+            recipes = result.scalars().all()
+
+            recipe_list = [
+                RecipeInfo(
+                    id=r.id,
+                    name=r.name,
+                    production_time=r.production_time,
+                    difficulty_rating=r.difficulty_rating
+                )
+                for r in recipes
+            ]
+
             return InteractResponse(
-                message=f"This is a {metadata.get('name', 'Workshop')}",
+                message=f"Select a recipe at {workshop_name}" if recipe_list else f"No recipes available at {workshop_name}",
                 action='workshop_menu',
                 entity_type='workshop',
-                entity_name=metadata.get('name', 'Workshop')
+                entity_name=workshop_name,
+                workshop_type=workshop_type,
+                recipes=recipe_list
             )
 
         elif interactable.entity_type == 'dispenser':
@@ -1169,6 +1321,137 @@ async def get_zone_entities(zone_id: str):
             }
             for e in entities
         ]
+
+
+# =============================================================================
+# Recipes Endpoints
+# =============================================================================
+
+@app.get("/api/recipes", tags=["Recipes"])
+async def get_all_recipes():
+    """Get all available recipes (good types that require a workshop)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(GoodType).where(GoodType.requires_workshop.isnot(None))
+        )
+        recipes = result.scalars().all()
+
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "requires_workshop": r.requires_workshop,
+                "production_time": r.production_time,
+                "difficulty_rating": r.difficulty_rating,
+                "input_goods_tags": r.input_goods_tags_required,
+                "tools_required": r.tools_required_tags
+            }
+            for r in recipes
+        ]
+
+
+@app.get("/api/recipes/workshop/{workshop_type}", tags=["Recipes"])
+async def get_workshop_recipes(workshop_type: str):
+    """Get recipes available at a specific workshop type."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(GoodType).where(GoodType.requires_workshop == workshop_type)
+        )
+        recipes = result.scalars().all()
+
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "requires_workshop": r.requires_workshop,
+                "production_time": r.production_time,
+                "difficulty_rating": r.difficulty_rating,
+                "input_goods_tags": r.input_goods_tags_required,
+                "tools_required": r.tools_required_tags
+            }
+            for r in recipes
+        ]
+
+
+@app.post("/api/debug/recipes/seed", tags=["Debug"])
+async def seed_recipes():
+    """Seed sample recipes for testing."""
+    async with async_session() as session:
+        # Check if recipes already exist
+        result = await session.execute(select(GoodType).limit(1))
+        if result.scalar_one_or_none():
+            return {"message": "Recipes already seeded"}
+
+        # Sample smithing recipes
+        sample_recipes = [
+            GoodType(
+                name="Iron Ingot",
+                type_tags=["metal", "ingot"],
+                requires_workshop="smithing",
+                production_time=120,
+                difficulty_rating=2,
+                input_goods_tags_required=[["ore", "iron"]],
+                tools_required_tags=["hammer"],
+                relevant_ability_score="STR"
+            ),
+            GoodType(
+                name="Steel Ingot",
+                type_tags=["metal", "ingot", "refined"],
+                requires_workshop="smithing",
+                production_time=180,
+                difficulty_rating=4,
+                input_goods_tags_required=[["metal", "iron"], ["fuel", "coal"]],
+                tools_required_tags=["hammer", "tongs"],
+                relevant_ability_score="STR"
+            ),
+            GoodType(
+                name="Iron Sword",
+                type_tags=["weapon", "sword"],
+                requires_workshop="smithing",
+                production_time=300,
+                difficulty_rating=5,
+                input_goods_tags_required=[["metal", "iron"]],
+                tools_required_tags=["hammer", "anvil"],
+                relevant_ability_score="DEX"
+            ),
+            GoodType(
+                name="Iron Nails",
+                type_tags=["metal", "fastener"],
+                requires_workshop="smithing",
+                production_time=60,
+                difficulty_rating=1,
+                input_goods_tags_required=[["metal", "iron"]],
+                tools_required_tags=["hammer"],
+                relevant_ability_score="DEX"
+            ),
+            # Weaving recipes
+            GoodType(
+                name="Cloth",
+                type_tags=["textile", "cloth"],
+                requires_workshop="weaving",
+                production_time=90,
+                difficulty_rating=2,
+                input_goods_tags_required=[["fiber", "thread"]],
+                tools_required_tags=["loom"],
+                relevant_ability_score="DEX"
+            ),
+            GoodType(
+                name="Rope",
+                type_tags=["textile", "rope"],
+                requires_workshop="weaving",
+                production_time=60,
+                difficulty_rating=1,
+                input_goods_tags_required=[["fiber"]],
+                tools_required_tags=[],
+                relevant_ability_score="STR"
+            ),
+        ]
+
+        for recipe in sample_recipes:
+            session.add(recipe)
+
+        await session.commit()
+        return {"message": f"Seeded {len(sample_recipes)} recipes"}
 
 
 # Tick engine state
