@@ -1037,3 +1037,76 @@ Most remaining features require significant new functionality:
 4. Add delete monster functionality
 5. Display timestamps where relevant in UI
 
+---
+
+## Session 15 - Implementation Agent (continued)
+
+### Date: 2026-01-10
+
+### Completed Tasks:
+
+1. **Feature 137: Timestamps in user timezone**
+   - Added `created_at` field to MonsterInfo Pydantic model
+   - Updated `monster_to_info()` to include ISO timestamp
+   - Added "Created" section to game panel UI
+   - Display timestamp using `toLocaleString()` with user's timezone
+   - Timestamps show in format like "Jan 10, 2026, 01:26 PM PST"
+
+2. **Feature 45: Offline auto-repeat continuation**
+   - Implemented `background_tick_processor()` running every 1 second
+   - Created `process_monster_autorepeat()` to execute recorded sequences
+   - Background processor finds all monsters with `is_playing=true`
+   - Handles move, push, deposit, and craft action types
+   - Auto-stops on missing ingredients or depleted tools
+   - Added debug endpoints:
+     - GET /api/debug/tick/status - Check tick processor status
+     - GET /api/debug/monsters/autorepeat-status - All monster autorepeat states
+
+### Feature Statistics:
+- Total features: 171
+- Passing: 164
+- In progress: 0
+- Completion: 95.9%
+
+### Verification Tests:
+- Feature 137: Created new monster, verified timestamp displayed in local timezone
+- Feature 45: Started autorepeat, closed browser, waited 5+ seconds, logged back in
+  - Monster continued moving while browser was closed (position 4,12 → 85,12)
+  - Autorepeat still running after reconnect
+
+### Files Modified This Session:
+- backend/main.py:
+  - Added `created_at` to MonsterInfo model
+  - Updated `monster_to_info()` to include timestamp
+  - Added `background_tick_processor()` async task
+  - Added `process_monster_autorepeat()` function
+  - Added `tick_status` and `debug_all_autorepeat_status` endpoints
+  - Started background task on app startup
+
+- backend/static/index.html:
+  - Added "Created" section to game panel
+  - Added CSS for `.created-info`
+  - Added JavaScript to format timestamp in user's local timezone
+
+### Git Commits:
+- e5dce55: Add timestamp display in user's local timezone (Feature 137)
+- 91e62ea: Implement offline auto-repeat continuation (Feature 45)
+
+### Technical Notes:
+- Background tick processor runs every 1 second (matches game tick rate)
+- Uses `asyncio.create_task()` on startup to run indefinitely
+- Tick engine can be paused/resumed via existing debug endpoints
+- Timestamps use JavaScript `toLocaleString()` for automatic timezone detection
+
+### Remaining Features (7 not yet passing):
+- Feature 90: Bulk item transport with wagon (requires wagon item storage)
+- Feature 94, 117-119: Search functionality
+- Feature 112: Delete monster
+- Feature 116: Pagination
+
+### Next Steps for Future Agents:
+1. Implement wagon item storage (push items into wagon)
+2. Add search/filter UI for monster list
+3. Add delete monster functionality
+4. Implement pagination for large lists
+
