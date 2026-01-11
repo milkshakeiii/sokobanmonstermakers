@@ -160,13 +160,15 @@ class SpriteFactory:
 class LightManager:
     """Manager for dynamic lights in the game."""
 
-    def __init__(self, game_window):
+    def __init__(self, game_window, enabled: bool = True):
         """Initialize the light manager.
 
         Args:
             game_window: The pyunicodegame window
+            enabled: Whether lighting system is enabled
         """
         self.game_window = game_window
+        self.enabled = enabled
 
         # Light storage
         self.lights: Dict[str, Any] = {}  # entity_id -> light
@@ -179,8 +181,11 @@ class LightManager:
             sprite: The player monster sprite to follow
 
         Returns:
-            The created light
+            The created light, or None if lighting is disabled
         """
+        if not self.enabled:
+            return None
+
         from config import LIGHT_CONFIGS
 
         config = LIGHT_CONFIGS["player_torch"]
@@ -208,8 +213,11 @@ class LightManager:
             sprite: Optional sprite to follow
 
         Returns:
-            The created light, or None
+            The created light, or None if lighting is disabled
         """
+        if not self.enabled:
+            return None
+
         from config import LIGHT_CONFIGS
 
         metadata = entity.get("metadata", {})

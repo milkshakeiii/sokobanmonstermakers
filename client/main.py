@@ -170,17 +170,16 @@ class MonsterWorkshopClient:
             depth=0.0,
         )
 
-        # Game overlay - same as game_window but unlit, for tutorial bubbles etc.
+        # Game overlay for tutorial bubbles (unlit, same depth as game window)
         self.game_overlay_window = pyunicodegame.create_window(
             "game_overlay",
             x=GAME_AREA_X,
             y=0,
             width=GAME_WORLD_WIDTH,
             height=GAME_WORLD_HEIGHT,
-            z_index=1,  # Above game_window
-            depth=0.0,  # Same parallax as game_window
+            z_index=1,
+            depth=0.0,
         )
-        # No lighting on this window - text will be fully bright
 
         # Monster info panel (top-left, fixed)
         self.monster_panel_window = pyunicodegame.create_window(
@@ -231,16 +230,17 @@ class MonsterWorkshopClient:
         )
         self.ui_overlay_window.visible = False
 
-        # Enable lighting on game window
-        self.game_window.set_lighting(enabled=True, ambient=Color.AMBIENT)
+        # Disable lighting on game window until performance is improved
+        # (lighting was taking 20ms per frame for an 80x40 grid)
+        self.game_window.set_lighting(enabled=False, ambient=Color.AMBIENT)
 
     def _init_subsystems(self):
         """Initialize rendering and UI subsystems."""
         # Sprite factory
         self.sprite_factory = SpriteFactory(self.game_window, self.network.player_id)
 
-        # Light manager
-        self.light_manager = LightManager(self.game_window)
+        # Light manager - disabled until performance is improved
+        self.light_manager = LightManager(self.game_window, enabled=False)
 
         # Effects manager
         self.effects_manager = EffectsManager(self.game_window)
@@ -406,7 +406,8 @@ class MonsterWorkshopClient:
     def _render(self):
         """Main render loop."""
         # Clear the game overlay (transparent background)
-        self.game_overlay_window.surface.fill((0, 0, 0, 0))
+        if self.game_overlay_window:
+            self.game_overlay_window.surface.fill((0, 0, 0, 0))
 
         # Render UI panels
         monster = self.game_state.get_player_monster()
@@ -428,8 +429,8 @@ class MonsterWorkshopClient:
             SCREEN_WIDTH - 12, 0, f"FPS: {fps:5.1f}", Color.TEXT_MUTED
         )
 
-        # Render tutorial bubble on unlit overlay (world coordinates)
-        if monster:
+        # Render tutorial bubble
+        if monster and self.game_overlay_window:
             self.tutorial_manager.render_near_player(
                 self.game_overlay_window,
                 monster["x"],
