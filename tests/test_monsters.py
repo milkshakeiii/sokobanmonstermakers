@@ -12,6 +12,8 @@ from conftest import (
     MockEntity,
 )
 
+VALID_TRANSFERABLE = ["handcrafts", "athletics", "outdoorsmonstership"]
+
 
 class TestSpawnMonster:
     """Tests for the spawn_monster intent."""
@@ -22,6 +24,7 @@ class TestSpawnMonster:
             player_id, "spawn_monster",
             monster_type="goblin",
             name="TestGoblin",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -45,6 +48,7 @@ class TestSpawnMonster:
             player_id, "spawn_monster",
             monster_type="cyclops",
             name="BigGuy",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -64,6 +68,7 @@ class TestSpawnMonster:
             player_id, "spawn_monster",
             monster_type="elf",
             name="Legolas",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -83,6 +88,7 @@ class TestSpawnMonster:
             player_id, "spawn_monster",
             monster_type="orc",
             name="Grommash",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -98,6 +104,7 @@ class TestSpawnMonster:
             player_id, "spawn_monster",
             monster_type="troll",
             name="BigTroll",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -117,6 +124,7 @@ class TestSpawnMonster:
             player_id, "spawn_monster",
             monster_type="dragon",
             name="Smaug",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -135,6 +143,7 @@ class TestSpawnMonster:
         intent = make_intent(
             player_id, "spawn_monster",
             name="DefaultMonster",
+            transferable_skills=VALID_TRANSFERABLE,
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -176,7 +185,7 @@ class TestTransferableSkills:
         intent = make_intent(
             player_id, "spawn_monster",
             monster_type="goblin",
-            transferable_skills=["flying", "telekinesis"],
+            transferable_skills=["flying", "telekinesis", "handcrafts"],
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -203,14 +212,14 @@ class TestTransferableSkills:
         # Should have error event
         error_event = find_event(result, "error")
         assert error_event is not None
-        assert "more than 3" in error_event["message"]
+        assert "exactly 3" in error_event["message"]
 
     def test_spawn_duplicate_skills(self, game, zone_id, player_id, setup_zone):
         """Cannot spawn with duplicate transferable skills."""
         intent = make_intent(
             player_id, "spawn_monster",
             monster_type="goblin",
-            transferable_skills=["handcrafts", "handcrafts"],
+            transferable_skills=["handcrafts", "handcrafts", "athletics"],
         )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
@@ -239,7 +248,12 @@ class TestMonsterOwnership:
 
     def test_monster_owned_by_spawner(self, game, zone_id, player_id, setup_zone):
         """Spawned monster is owned by the spawning player."""
-        intent = make_intent(player_id, "spawn_monster", monster_type="goblin")
+        intent = make_intent(
+            player_id,
+            "spawn_monster",
+            monster_type="goblin",
+            transferable_skills=VALID_TRANSFERABLE,
+        )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
 
@@ -299,7 +313,12 @@ class TestMonsterCapacity:
 
     def test_cyclops_capacity(self, game, zone_id, player_id, setup_zone):
         """Cyclops has balanced body/mind capacity."""
-        intent = make_intent(player_id, "spawn_monster", monster_type="cyclops")
+        intent = make_intent(
+            player_id,
+            "spawn_monster",
+            monster_type="cyclops",
+            transferable_skills=VALID_TRANSFERABLE,
+        )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
 
@@ -312,7 +331,12 @@ class TestMonsterCapacity:
 
     def test_troll_high_capacity(self, game, zone_id, player_id, setup_zone):
         """Troll has very high capacity for equipment."""
-        intent = make_intent(player_id, "spawn_monster", monster_type="troll")
+        intent = make_intent(
+            player_id,
+            "spawn_monster",
+            monster_type="troll",
+            transferable_skills=VALID_TRANSFERABLE,
+        )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
 
@@ -329,7 +353,13 @@ class TestSpawnEvent:
 
     def test_spawn_emits_event(self, game, zone_id, player_id, setup_zone):
         """Successful spawn emits a spawned event."""
-        intent = make_intent(player_id, "spawn_monster", monster_type="goblin", name="TestGob")
+        intent = make_intent(
+            player_id,
+            "spawn_monster",
+            monster_type="goblin",
+            name="TestGob",
+            transferable_skills=VALID_TRANSFERABLE,
+        )
 
         result = game.on_tick(zone_id, [], [intent], tick_number=1)
 

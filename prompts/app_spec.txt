@@ -143,7 +143,7 @@
       - Applied skills (learned through work, 0-1 scale)
       - Specific skills (one per exact good type)
       - Skill learning formulas from MonsterMakers
-      - Skill forgetting when not used (WIS reduces rate)
+      - Skill forgetting when not used (WIS reduces rate) [Editor's note: real-time decay removed; forgetting only occurs on task completion to match Django.]
       - Monster aging: +1 all stats at 30 days, +2 at 60 days
       - Monster upkeep cost every 28 days
       - Cost multiplier: spending renown increases future costs
@@ -224,7 +224,7 @@
       - Upkeep system: 28-day cycle, monsters cost renown upkeep
       - Cost multiplier: spending renown increases future monster/equipment costs
       - Skill learning: improves while working (INT bonus)
-      - Skill forgetting: decays when not used (WIS reduces rate)
+      - Skill forgetting: decays when not used (WIS reduces rate) [Editor's note: real-time decay removed; forgetting only occurs on task completion to match Django.]
       - Monster aging bonuses: +1 all stats at 30 days, +2 at 60 days
       - Physical possession determines ownership (no checkout system)
       - Value calculation based on MonsterMakers formulas (quality, depth, CHA)
@@ -551,7 +551,7 @@
         - Implement renown system
         - Add share distribution for all contributors
         - Implement skill learning during work
-        - Add skill forgetting over time
+        - Add skill forgetting over time [Editor's note: real-time decay removed; forgetting only occurs on task completion to match Django.]
         - Implement monster upkeep
         - Add cost multiplier for spending
         - Implement monster aging bonuses

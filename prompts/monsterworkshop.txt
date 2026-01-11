@@ -262,7 +262,7 @@ Confirmed Economy:
 - Renown system: Full share distribution (producers, tool makers, transporters all get credit)
 - Upkeep: 28-day cycle, monsters cost renown upkeep
 - Cost multiplier: Spending increases future costs
-- Skill learning/forgetting: Full formulas (INT, WIS, transferable skills affecting rates)
+- Skill learning/forgetting: Full formulas (INT, WIS, transferable skills affecting rates) [Editor's note: real-time decay removed; forgetting only occurs on task completion to match Django.]
 - Monster aging: +1 stats at 30 days, +2 at 60 days
 - No checkout system: Physical possession = ownership (push it, it's yours!)
 

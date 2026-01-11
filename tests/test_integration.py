@@ -27,6 +27,7 @@ class TestGatheringLoop:
             player_id, "spawn_monster",
             monster_type="goblin",
             name="Gatherer",
+            transferable_skills=["handcrafts", "athletics", "outdoorsmonstership"],
         )
 
         result = game.on_tick(zone_id, [], [spawn_intent], tick_number=1)

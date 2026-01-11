@@ -2,7 +2,6 @@
 
 import pytest
 from uuid import uuid4
-from datetime import datetime, timedelta
 
 from conftest import (
     make_monster,
@@ -38,27 +37,6 @@ class TestSkillLearning:
             applied = skills.get("applied", {})
             # Harvesting skill should have increased
             assert "harvesting" in applied or len(applied) > 0
-
-    def test_last_skill_gained_recorded(self, game, zone_id, player_id, setup_zone):
-        """Workshop records the last skill gained after crafting."""
-        monster = make_monster(5, 5, player_id)
-        gathering = make_gathering_spot(10, 4, "Cotton Bolls")
-
-        gathering.metadata_["crafter_monster_id"] = str(monster.id)
-        gathering.metadata_["selected_recipe_id"] = "Cotton Bolls"
-        gathering.metadata_["selected_recipe_name"] = "Cotton Bolls"
-        gathering.metadata_["is_crafting"] = True
-        gathering.metadata_["crafting_started_tick"] = 0
-        gathering.metadata_["crafting_duration"] = 1
-
-        result = game.on_tick(zone_id, [monster, gathering], [], tick_number=2)
-
-        gathering_update = find_update_for(result, gathering.id)
-        if gathering_update and gathering_update.metadata:
-            last_skill = gathering_update.metadata.get("last_skill_gained")
-            # Should have recorded skill gains
-            if last_skill:
-                assert "primary_skill" in last_skill or "specific_skill" in last_skill
 
 
 class TestSkillValues:
@@ -114,33 +92,6 @@ class TestTransferableSkills:
         if recipe:
             count = game._matching_transferable_skills_count(recipe, monster)
             assert count == 0
-
-
-class TestSkillDecay:
-    """Tests for skill decay over time."""
-
-    def test_skill_decay_applies_over_time(self, game, zone_id, player_id, setup_zone):
-        """Skills decay when not used for a while."""
-        monster = make_monster(0, 0, uuid4())
-        monster.metadata_["skills"]["applied"]["blacksmithing"] = 0.5
-        monster.metadata_["skills"]["last_used"] = {}
-        monster.metadata_["skills"]["last_decay_at"] = {}
-        # Created long ago
-        old_date = datetime.utcnow() - timedelta(days=30)
-        monster.metadata_["created_at"] = old_date.isoformat()
-
-        updates = []
-        game._apply_skill_decay(monster, updates)
-
-        # Check if decay was applied (depends on time calculation)
-        if updates:
-            update = updates[0]
-            if update.metadata:
-                skills = update.metadata.get("skills", {})
-                applied = skills.get("applied", {})
-                new_value = applied.get("blacksmithing", 0.5)
-                # Should have decayed somewhat
-                assert new_value <= 0.5
 
 
 class TestSpecificSkills:

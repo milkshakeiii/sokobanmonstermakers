@@ -479,49 +479,48 @@ class MonsterWorkshopGame:
                 "target_player_id": str(intent.player_id),
             }
 
-        transferable_requested = intent.data.get("transferable_skills") or []
-        transferable_skills: list[str] = []
-        if transferable_requested:
-            if not isinstance(transferable_requested, list):
-                return None, {
-                    "type": "error",
-                    "message": "Transferable skills must be a list",
-                    "target_player_id": str(intent.player_id),
-                }
-            skill_lookup = {
-                str(skill).strip().lower().replace(" ", "_"): str(skill)
-                for skill in self._transferable_skills
+        transferable_requested = intent.data.get("transferable_skills")
+        if not isinstance(transferable_requested, list):
+            return None, {
+                "type": "error",
+                "message": "Transferable skills must be a list",
+                "target_player_id": str(intent.player_id),
             }
-            invalid_skills = []
-            for skill in transferable_requested:
-                if not skill:
-                    continue
-                key = str(skill).strip().lower().replace(" ", "_")
-                if key in skill_lookup:
-                    transferable_skills.append(skill_lookup[key])
-                else:
-                    invalid_skills.append(str(skill))
+        if len(transferable_requested) != 3:
+            return None, {
+                "type": "error",
+                "message": "Must select exactly 3 transferable skills",
+                "target_player_id": str(intent.player_id),
+            }
+        skill_lookup = {
+            str(skill).strip().lower().replace(" ", "_"): str(skill)
+            for skill in self._transferable_skills
+        }
+        invalid_skills = []
+        transferable_skills: list[str] = []
+        for skill in transferable_requested:
+            if not skill:
+                invalid_skills.append(str(skill))
+                continue
+            key = str(skill).strip().lower().replace(" ", "_")
+            if key in skill_lookup:
+                transferable_skills.append(skill_lookup[key])
+            else:
+                invalid_skills.append(str(skill))
 
-            if invalid_skills:
-                return None, {
-                    "type": "error",
-                    "message": f"Invalid transferable skills: {', '.join(invalid_skills)}",
-                    "target_player_id": str(intent.player_id),
-                }
+        if invalid_skills:
+            return None, {
+                "type": "error",
+                "message": f"Invalid transferable skills: {', '.join(invalid_skills)}",
+                "target_player_id": str(intent.player_id),
+            }
 
-            if len(transferable_skills) > 3:
-                return None, {
-                    "type": "error",
-                    "message": "Cannot select more than 3 transferable skills",
-                    "target_player_id": str(intent.player_id),
-                }
-
-            if len({skill.lower() for skill in transferable_skills}) != len(transferable_skills):
-                return None, {
-                    "type": "error",
-                    "message": "Duplicate transferable skills selected",
-                    "target_player_id": str(intent.player_id),
-                }
+        if len({skill.lower() for skill in transferable_skills}) != len(transferable_skills):
+            return None, {
+                "type": "error",
+                "message": "Duplicate transferable skills selected",
+                "target_player_id": str(intent.player_id),
+            }
 
         commune = self._ensure_commune(
             entities=entities,
@@ -546,8 +545,7 @@ class MonsterWorkshopGame:
 
         spawn_x, spawn_y = self._choose_spawn_point(entities, zone_def, zone_width, zone_height)
         metadata = self._build_monster_metadata(name, monster_type, definition)
-        if transferable_skills:
-            metadata["skills"]["transferable"] = transferable_skills
+        metadata["skills"]["transferable"] = transferable_skills
 
         return (
             EntityCreate(
@@ -1196,7 +1194,7 @@ class MonsterWorkshopGame:
                 continue
 
             crafter = self._get_monster_by_id(entities, metadata.get("crafter_monster_id"))
-            skill_gain = self._apply_skill_gain(crafter, recipe_entry, duration, updates)
+            self._apply_skill_gain(crafter, recipe_entry, duration, updates)
             output_creates, output_quantity = self._create_output_items(
                 entities,
                 workshop,
@@ -1217,9 +1215,6 @@ class MonsterWorkshopGame:
                 deletes,
             )
             consumed_inputs = self._consume_input_items(input_items, deletes)
-            if skill_gain:
-                metadata["last_skill_gained"] = skill_gain
-
             if depleted_tools:
                 metadata["last_depleted_tools"] = depleted_tools
 
@@ -2757,57 +2752,6 @@ class MonsterWorkshopGame:
             if self._entity_kind(monster) != KIND_MONSTER:
                 continue
             self._process_upkeep(monster, entities, updates, creates, events)
-
-    def _apply_skill_decay(self, monster: Entity, updates: list[EntityUpdate]) -> None:
-        metadata = dict(monster.metadata_ or {})
-        skills = dict(metadata.get("skills") or {})
-        applied = dict(skills.get("applied") or {})
-        if not applied:
-            return
-
-        last_used = dict(skills.get("last_used") or {})
-        last_decay = dict(skills.get("last_decay_at") or {})
-        created_at = self._parse_datetime(metadata.get("created_at")) or datetime.utcnow()
-        now = datetime.utcnow()
-
-        stats = metadata.get("stats") or {}
-        wis = int(stats.get("wis", 10))
-        wis_modifier = 1.0 - (wis - 10) * 0.1
-        wis_modifier = max(0.1, min(2.0, wis_modifier))
-
-        changed = False
-        for skill_name, skill_level in applied.items():
-            try:
-                level = float(skill_level)
-            except (TypeError, ValueError):
-                level = 0.0
-
-            last_used_dt = self._parse_datetime(last_used.get(skill_name)) or created_at
-            last_decay_dt = self._parse_datetime(last_decay.get(skill_name))
-            decay_start = last_used_dt
-            if last_decay_dt and last_decay_dt > decay_start:
-                decay_start = last_decay_dt
-
-            if decay_start >= now:
-                continue
-
-            real_seconds = (now - decay_start).total_seconds()
-            game_seconds = real_seconds * GAME_TIME_MULTIPLIER
-            game_days = game_seconds / (24 * 60 * 60)
-            decay_amount = 0.001 * game_days * wis_modifier
-
-            new_level = max(0.0, level - decay_amount)
-            new_level = round(new_level, 3)
-            if new_level != level:
-                applied[skill_name] = new_level
-                last_decay[skill_name] = now.isoformat()
-                changed = True
-
-        if changed:
-            skills["applied"] = applied
-            skills["last_decay_at"] = last_decay
-            metadata["skills"] = skills
-            self._apply_metadata(monster, metadata, updates)
 
     def _process_upkeep(
         self,
