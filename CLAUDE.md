@@ -36,9 +36,22 @@ python3 client/main.py
 
 ### Controls
 
+**Movement:**
 - WASD or Arrow Keys: Move monster
 - Walk into items to push them
-- Q: Quit
+
+**Actions:**
+- Space / E: Interact with adjacent entity
+- R: Toggle recording (macro)
+- P: Toggle playback (macro replay)
+- H: Hitch/unhitch wagon
+- U: Unload item from wagon
+
+**Menus:**
+- N: Spawn new monster dialog
+- C: Craft/select recipe (when near workshop)
+- F1: Help overlay
+- Q / Esc: Quit
 
 ## Project Structure
 
@@ -49,8 +62,15 @@ backend/
   tests/                    # Pytest test suite
 
 client/
-  main.py                   # Pygame/pyunicodegame client
+  main.py                   # Main entry point
+  config.py                 # Colors, keybindings, constants
   requirements.txt          # Client dependencies
+
+  network/                  # WebSocket communication
+  state/                    # Game state tracking
+  input/                    # Input handling, dialogs
+  rendering/                # Sprites, effects, lighting
+  ui/                       # Panels, notifications, tutorials
 ```
 
 ## Running Tests

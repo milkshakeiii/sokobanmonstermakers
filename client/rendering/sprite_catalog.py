@@ -1,0 +1,464 @@
+"""Sprite definitions and Unicode character mappings for all entity types."""
+
+from typing import Any, Dict, Optional, Tuple
+
+from config import Color
+
+
+# Monster sprites (1x1)
+MONSTER_SPRITES = {
+    "cyclops": {"player": "@", "other": "C"},
+    "elf": {"player": "@", "other": "E"},
+    "goblin": {"player": "@", "other": "G"},
+    "orc": {"player": "@", "other": "O"},
+    "troll": {"player": "@", "other": "T"},
+}
+
+MONSTER_COLORS = {
+    "cyclops": {"player": Color.PLAYER_CYCLOPS, "other": Color.OTHER_CYCLOPS},
+    "elf": {"player": Color.PLAYER_ELF, "other": Color.OTHER_ELF},
+    "goblin": {"player": Color.PLAYER_GOBLIN, "other": Color.OTHER_GOBLIN},
+    "orc": {"player": Color.PLAYER_ORC, "other": Color.OTHER_ORC},
+    "troll": {"player": Color.PLAYER_TROLL, "other": Color.OTHER_TROLL},
+}
+
+
+# Item sprites (2x1) - matched by type tags or name
+# Format: (pattern, default_color)
+ITEM_SPRITE_MAP = {
+    # Fibers and raw materials
+    "cotton": ("()", Color.ITEM_COTTON),
+    "silk": ("@@", Color.ITEM_SILK),
+    "silkworm": ("@@", Color.ITEM_SILK),
+    "cocoon": ("@@", Color.ITEM_SILK),
+    "stalk": ("||", Color.ITEM_STALKS),
+    "hemp": ("||", Color.ITEM_STALKS),
+    "ramie": ("||", Color.ITEM_STALKS),
+    "kudzu": ("||", Color.ITEM_STALKS),
+    "velvetleaf": ("||", Color.ITEM_STALKS),
+    "hempvine": ("||", Color.ITEM_STALKS),
+    "fiber": ("||", Color.ITEM_STALKS),
+    "bast": ("||", Color.ITEM_STALKS),
+
+    # Grains
+    "grain": ("{{", Color.ITEM_GRAIN),
+    "wheat": ("{{", Color.ITEM_GRAIN),
+    "rice": ("{{", Color.ITEM_GRAIN),
+    "barley": ("{{", Color.ITEM_GRAIN),
+    "sorghum": ("{{", Color.ITEM_GRAIN),
+    "millet": ("{{", Color.ITEM_GRAIN),
+    "malt": ("%%", (184, 134, 11)),
+
+    # Thread and fabric
+    "thread": ("~~", Color.ITEM_THREAD),
+    "sliver": ("~~", Color.ITEM_THREAD),
+    "fabric": ("##", Color.ITEM_FABRIC),
+
+    # Dyes
+    "dye": ("[]", None),  # Color determined by dye type
+    "crimson": ("[]", Color.DYE_CRIMSON),
+    "pink": ("[]", Color.DYE_PINK),
+    "purple": ("[]", Color.DYE_PURPLE),
+    "canary": ("[]", Color.DYE_CANARY_YELLOW),
+    "golden": ("[]", Color.DYE_GOLDEN_YELLOW),
+    "indigo": ("[]", Color.DYE_INDIGO),
+    "tea brown": ("[]", Color.DYE_TEA_BROWN),
+    "dark green": ("[]", Color.DYE_DARK_GREEN),
+    "bright green": ("[]", Color.DYE_BRIGHT_GREEN),
+    "light green": ("[]", Color.DYE_LIGHT_GREEN),
+    "deep sky": ("[]", Color.DYE_DEEP_SKY_BLUE),
+    "eggshell": ("[]", Color.DYE_EGGSHELL_BLUE),
+    "black dye": ("[]", Color.DYE_BLACK),
+    "wood red": ("[]", Color.DYE_WOOD_RED),
+
+    # Foods
+    "flour": ("..", Color.ITEM_FLOUR),
+    "sugar": ("''", Color.ITEM_SUGAR),
+    "salt": ("++", (248, 248, 255)),
+    "candy": ("oo", (255, 182, 193)),
+
+    # Clay and ceramics
+    "clay": ("<>", None),  # Color by clay type
+    "red clay": ("<>", Color.ITEM_CLAY_RED),
+    "yellow clay": ("<>", Color.ITEM_CLAY_YELLOW),
+    "blue clay": ("<>", Color.ITEM_CLAY_BLUE),
+    "white clay": ("<>", Color.ITEM_CLAY_WHITE),
+    "black clay": ("<>", Color.ITEM_CLAY_BLACK),
+    "brick": ("==", Color.ITEM_BRICK),
+    "tile": ("[]", Color.ITEM_BRICK),
+    "ceramic": ("{}", Color.ITEM_CERAMIC),
+    "porcelain": ("{}", (250, 250, 255)),
+    "pot": ("{}", Color.ITEM_CERAMIC),
+    "cup": ("{}", Color.ITEM_CERAMIC),
+
+    # Metals
+    "metal": ("[]", Color.ITEM_METAL),
+    "ingot": ("[]", Color.ITEM_METAL),
+    "wire": ("--", Color.ITEM_METAL),
+    "sycee": ("[]", Color.ITEM_SILK),  # Gold color
+    "tool": ("|-", Color.ITEM_TOOL),
+    "hammer": ("|-", Color.ITEM_TOOL),
+    "anvil": ("__", (64, 64, 64)),
+    "knife": ("/\\", Color.ITEM_TOOL),
+    "needle": ("..", (211, 211, 211)),
+
+    # Plants and flowers
+    "blossom": ("**", (255, 182, 193)),
+    "flower": ("**", (255, 182, 193)),
+    "safflower": ("**", (255, 69, 0)),
+    "lotus": ("**", (255, 105, 180)),
+    "plum": ("oo", (128, 0, 128)),
+    "fruit": ("oo", (255, 165, 0)),
+    "bud": ("oo", (144, 238, 144)),
+    "leaf": ("%%", (34, 139, 34)),
+    "leaves": ("%%", (34, 139, 34)),
+    "gallnut": ("oo", (139, 90, 43)),
+
+    # Minerals
+    "vitriol": ("<>", (0, 128, 0)),
+    "alum": ("<>", (200, 200, 200)),
+    "charcoal": ("##", (40, 40, 40)),
+    "lye": ("[]", (200, 200, 150)),
+
+    # Misc
+    "glaze": ("[]", (200, 200, 255)),
+    "pattern": ("[]", (150, 150, 150)),
+    "die": ("[]", (192, 192, 192)),
+    "mirror": ("[]", (220, 220, 255)),
+    "bell": ("()", (218, 165, 32)),
+    "statue": ("[]", (192, 192, 192)),
+
+    # Textile equipment
+    "spinner": ("~~", (139, 90, 43)),
+    "loom": ("##", (139, 90, 43)),
+    "basket": ("()", (139, 90, 43)),
+    "spool": ("()", (200, 200, 200)),
+    "cauldron": ("{}", (64, 64, 64)),
+    "brazier": ("{}", (255, 100, 50)),
+}
+
+
+# Workshop sprites (4x4)
+WORKSHOP_PATTERNS = {
+    "spinning": """+--+
+|~~|
+|~~|
++--+""",
+    "weaving": """+--+
+|##|
+|##|
++--+""",
+    "dyeing": """+--+
+|[]|
+|[]|
++--+""",
+    "sericulture": """+--+
+|@@|
+|@@|
++--+""",
+    "smithing": """+--+
+|/\\|
+|__|
++--+""",
+    "casting": """+--+
+|/\\|
+|__|
++--+""",
+    "blacksmithing": """+--+
+|/\\|
+|__|
++--+""",
+    "pottery": """+--+
+|<>|
+|<>|
++--+""",
+    "milling": """+--+
+|::|
+|::|
++--+""",
+    "confectionery": """+--+
+|oo|
+|oo|
++--+""",
+    "carpentry": """+--+
+|--|
+|--|
++--+""",
+    "default": """+--+
+|**|
+|**|
++--+""",
+}
+
+WORKSHOP_COLORS = {
+    "spinning": Color.WORKSHOP_SPINNING,
+    "weaving": Color.WORKSHOP_WEAVING,
+    "dyeing": Color.WORKSHOP_DYEING,
+    "sericulture": Color.WORKSHOP_SERICULTURE,
+    "smithing": Color.WORKSHOP_SMITHING,
+    "casting": Color.WORKSHOP_SMITHING,
+    "blacksmithing": Color.WORKSHOP_SMITHING,
+    "pottery": Color.WORKSHOP_POTTERY,
+    "milling": Color.WORKSHOP_MILLING,
+    "confectionery": (255, 192, 203),
+    "carpentry": (139, 90, 43),
+    "default": Color.WORKSHOP_GENERAL,
+}
+
+
+# Gathering spot pattern (4x4)
+GATHERING_SPOT_PATTERN = """....
+.XX.
+.XX.
+...."""
+
+
+# Wagon sprites (3x2)
+WAGON_EMPTY = """[==]
+ oo """
+
+WAGON_LOADED = """[##]
+ oo """
+
+
+# Other entity sprites
+OTHER_SPRITES = {
+    "dispenser": ("D", Color.DISPENSER),
+    "signpost": ("!", Color.SIGNPOST),
+    "terrain_block": ("#", Color.TERRAIN),
+    "commune": ("*", Color.COMMUNE),
+}
+
+DELIVERY_PATTERN = """>>\n>>"""
+
+
+def get_monster_sprite_def(
+    monster_type: str,
+    is_player: bool,
+) -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for a monster.
+
+    Args:
+        monster_type: Type of monster (goblin, elf, etc.)
+        is_player: Whether this is the player's monster
+
+    Returns:
+        Tuple of (character, color)
+    """
+    key = "player" if is_player else "other"
+
+    sprites = MONSTER_SPRITES.get(monster_type, MONSTER_SPRITES["goblin"])
+    colors = MONSTER_COLORS.get(monster_type, MONSTER_COLORS["goblin"])
+
+    return sprites[key], colors[key]
+
+
+def get_item_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for an item.
+
+    Args:
+        metadata: Entity metadata containing good_type, type_tags, etc.
+
+    Returns:
+        Tuple of (pattern, color)
+    """
+    good_type = metadata.get("good_type", "").lower()
+    type_tags = metadata.get("type_tags", [])
+
+    # Check type tags first (more specific)
+    for tag in type_tags:
+        tag_lower = tag.lower()
+        if tag_lower in ITEM_SPRITE_MAP:
+            pattern, color = ITEM_SPRITE_MAP[tag_lower]
+            if color is None:
+                color = _derive_item_color(metadata, good_type)
+            return pattern, color
+
+    # Check good type name
+    for key, (pattern, color) in ITEM_SPRITE_MAP.items():
+        if key in good_type:
+            if color is None:
+                color = _derive_item_color(metadata, good_type)
+            return pattern, color
+
+    # Default
+    return "**", Color.ITEM_DEFAULT
+
+
+def _derive_item_color(metadata: Dict, good_type: str) -> Tuple[int, int, int]:
+    """Derive color from item metadata when not explicitly mapped."""
+    good_type_lower = good_type.lower()
+
+    # Dyed fabric - extract dye color
+    if "dyed" in good_type_lower:
+        for dye_name, (_, color) in ITEM_SPRITE_MAP.items():
+            if dye_name in good_type_lower and color:
+                return color
+        return Color.ITEM_FABRIC
+
+    # Clay types
+    if "red" in good_type_lower:
+        return Color.ITEM_CLAY_RED
+    if "yellow" in good_type_lower:
+        return Color.ITEM_CLAY_YELLOW
+    if "blue" in good_type_lower:
+        return Color.ITEM_CLAY_BLUE
+    if "white" in good_type_lower:
+        return Color.ITEM_CLAY_WHITE
+    if "black" in good_type_lower:
+        return Color.ITEM_CLAY_BLACK
+
+    return Color.ITEM_DEFAULT
+
+
+def get_workshop_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for a workshop.
+
+    Args:
+        metadata: Entity metadata
+
+    Returns:
+        Tuple of (pattern, color)
+    """
+    # Try to determine workshop type from various metadata fields
+    workshop_type = None
+
+    # Check for explicit workshop type
+    if "workshop_type" in metadata:
+        workshop_type = metadata["workshop_type"].lower()
+
+    # Check selected recipe skill
+    elif "selected_recipe_id" in metadata:
+        recipe = metadata.get("selected_recipe_id", "").lower()
+        if "thread" in recipe or "silk" in recipe:
+            workshop_type = "spinning"
+        elif "fabric" in recipe:
+            workshop_type = "weaving"
+        elif "dye" in recipe:
+            workshop_type = "dyeing"
+
+    # Check primary applied skill from recipe
+    elif "primary_applied_skill" in metadata:
+        skill = metadata["primary_applied_skill"].lower()
+        skill_to_type = {
+            "spinning": "spinning",
+            "weaving": "weaving",
+            "dyeing": "dyeing",
+            "sericulture": "sericulture",
+            "blacksmithing": "smithing",
+            "casting": "casting",
+            "pottery": "pottery",
+            "milling": "milling",
+            "confectionery": "confectionery",
+            "carpentry": "carpentry",
+        }
+        workshop_type = skill_to_type.get(skill, "default")
+
+    if workshop_type is None:
+        workshop_type = "default"
+
+    pattern = WORKSHOP_PATTERNS.get(workshop_type, WORKSHOP_PATTERNS["default"])
+    color = WORKSHOP_COLORS.get(workshop_type, WORKSHOP_COLORS["default"])
+
+    return pattern, color
+
+
+def get_gathering_spot_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for a gathering spot.
+
+    Args:
+        metadata: Entity metadata
+
+    Returns:
+        Tuple of (pattern, color)
+    """
+    # Get the gathered good type
+    good_type = metadata.get("gathered_good_type", "").lower()
+
+    # Determine center icon based on good type
+    if "cotton" in good_type:
+        center = "()"
+        color = Color.ITEM_COTTON
+    elif "silk" in good_type or "cocoon" in good_type:
+        center = "@@"
+        color = Color.ITEM_SILK
+    elif "grain" in good_type or "wheat" in good_type or "rice" in good_type:
+        center = "{{"
+        color = Color.ITEM_GRAIN
+    elif "clay" in good_type:
+        center = "<>"
+        color = Color.WORKSHOP_POTTERY
+    else:
+        center = "**"
+        color = Color.GATHERING_SPOT
+
+    pattern = GATHERING_SPOT_PATTERN.replace("XX", center)
+    return pattern, color
+
+
+def get_wagon_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for a wagon.
+
+    Args:
+        metadata: Entity metadata
+
+    Returns:
+        Tuple of (pattern, color)
+    """
+    loaded_items = metadata.get("loaded_item_ids", [])
+
+    if loaded_items:
+        return WAGON_LOADED, Color.WAGON
+    else:
+        return WAGON_EMPTY, Color.WAGON
+
+
+def get_delivery_sprite_def() -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for a delivery zone."""
+    return DELIVERY_PATTERN, Color.DELIVERY
+
+
+def get_sprite_def(entity: Dict[str, Any], player_id: Optional[str] = None) -> Tuple[str, Tuple[int, int, int]]:
+    """Get sprite definition for any entity.
+
+    Args:
+        entity: Full entity data dict
+        player_id: Current player's ID (for monster ownership check)
+
+    Returns:
+        Tuple of (pattern, color)
+    """
+    metadata = entity.get("metadata", {})
+    kind = metadata.get("kind", "unknown")
+
+    if kind == "monster":
+        monster_type = metadata.get("monster_type", "goblin")
+        is_player = entity.get("owner_id") == player_id
+        return get_monster_sprite_def(monster_type, is_player)
+
+    elif kind == "item":
+        return get_item_sprite_def(metadata)
+
+    elif kind == "workshop":
+        return get_workshop_sprite_def(metadata)
+
+    elif kind == "gathering_spot":
+        return get_gathering_spot_sprite_def(metadata)
+
+    elif kind == "wagon":
+        return get_wagon_sprite_def(metadata)
+
+    elif kind == "delivery":
+        return get_delivery_sprite_def()
+
+    elif kind in OTHER_SPRITES:
+        return OTHER_SPRITES[kind]
+
+    else:
+        return ("?", Color.GRAY)
+
+
+def get_item_color(metadata: Dict[str, Any]) -> Tuple[int, int, int]:
+    """Get just the color for an item (for UI display)."""
+    _, color = get_item_sprite_def(metadata)
+    return color
