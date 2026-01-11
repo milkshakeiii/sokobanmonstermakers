@@ -3099,10 +3099,12 @@ class MonsterWorkshopGame:
             return 1
         return 0
 
-    def _parse_datetime(self, value: str) -> datetime | None:
+    def _parse_datetime(self, value: str | None) -> datetime | None:
+        if value is None:
+            return None
         try:
             return datetime.fromisoformat(value)
-        except ValueError:
+        except (ValueError, TypeError):
             return None
 
     def _attempt_push(

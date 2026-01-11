@@ -1,0 +1,41 @@
+{
+  "transferable_skills": [
+    "mathematics",
+    "science",
+    "engineering",
+    "writing",
+    "visual_art",
+    "music",
+    "handcrafts",
+    "athletics",
+    "outdoorsmonstership",
+    "social"
+  ],
+  "applied_skills": [
+    "hauling",
+    "wagon_driving",
+    "sericulture",
+    "spinning",
+    "weaving",
+    "harvesting",
+    "textiles",
+    "threshing",
+    "gathering",
+    "dyeing",
+    "prospecting",
+    "chemistry",
+    "milling",
+    "confectionery",
+    "firing",
+    "pottery",
+    "painting",
+    "casting",
+    "stone_carving",
+    "carpentry",
+    "blacksmithing"
+  ],
+  "relevant_transferable_skills": {
+    "hauling": ["athletics", "outdoorsmonstership", "social"],
+    "wagon_driving": ["athletics", "outdoorsmonstership", "social"]
+  }
+}
