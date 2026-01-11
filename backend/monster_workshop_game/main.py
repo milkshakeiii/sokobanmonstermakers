@@ -3809,6 +3809,21 @@ class MonsterWorkshopGame:
 
         creates.extend(self._create_boundary_blocks(zone_width, zone_height))
 
+        # Add a test item for pushing
+        creates.append(EntityCreate(
+            x=5,
+            y=5,
+            width=1,
+            height=1,
+            metadata={
+                "kind": KIND_ITEM,
+                "good_type": "test_item",
+                "name": "Test Item",
+                "quality": 1.0,
+                "weight": 1,
+            },
+        ))
+
         static_entities = (zone_def or {}).get("static_entities") or []
         for entry in static_entities:
             create = self._entity_from_def(entry)
