@@ -246,6 +246,14 @@ class MonsterWorkshopGame:
                     events=events,
                 )
 
+            elif action == "control_monster":
+                self._handle_control_monster(
+                    intent=intent,
+                    entities=entities,
+                    updates=updates,
+                    events=events,
+                )
+
             elif action == "recording_start":
                 self._handle_recording_start(intent, entity_map, updates, events)
 
@@ -345,6 +353,25 @@ class MonsterWorkshopGame:
         full_state: dict[str, Any],
     ) -> dict[str, Any]:
         player_state = dict(full_state)
+
+        # Filter out phased-out monsters owned by other players
+        entities = full_state.get("entities", [])
+        if entities:
+            filtered_entities = []
+            for entity in entities:
+                metadata = entity.get("metadata") or {}
+                if metadata.get("kind") == KIND_MONSTER:
+                    controlled = metadata.get("controlled", True)
+                    is_playing = (metadata.get("current_task") or {}).get("is_playing", False)
+                    is_phased_out = not controlled and not is_playing
+                    if is_phased_out:
+                        # Only show to owner
+                        owner_id = entity.get("owner_id")
+                        if owner_id != str(player_id):
+                            continue
+                filtered_entities.append(entity)
+            player_state["entities"] = filtered_entities
+
         events = full_state.get("events", [])
         if events:
             filtered = []
@@ -577,14 +604,71 @@ class MonsterWorkshopGame:
 
         for entity in entities:
             if entity.owner_id == player_id and self._entity_kind(entity) == KIND_MONSTER:
+                # Mark monster as uncontrolled
                 metadata = dict(entity.metadata_ or {})
-                metadata["online"] = False
+                metadata["controlled"] = False
                 self._apply_metadata(entity, metadata, updates)
 
         events.append({
             "type": "disconnect",
             "message": "Player disconnected",
             "target_player_id": str(player_id),
+        })
+
+    def _handle_control_monster(
+        self,
+        intent: Intent,
+        entities: list[Entity],
+        updates: list[EntityUpdate],
+        events: list[dict[str, Any]],
+    ) -> None:
+        entity_id = self._parse_entity_id(intent.data.get("entity_id"))
+        if entity_id is None:
+            return
+
+        # Find the monster
+        monster = None
+        for entity in entities:
+            if entity.id == entity_id:
+                monster = entity
+                break
+
+        if monster is None:
+            events.append({
+                "type": "error",
+                "message": "Monster not found",
+                "target_player_id": str(intent.player_id),
+            })
+            return
+
+        # Verify ownership
+        if monster.owner_id != intent.player_id:
+            events.append({
+                "type": "error",
+                "message": "You don't own this monster",
+                "target_player_id": str(intent.player_id),
+            })
+            return
+
+        # Verify it's a monster
+        if self._entity_kind(monster) != KIND_MONSTER:
+            events.append({
+                "type": "error",
+                "message": "Entity is not a monster",
+                "target_player_id": str(intent.player_id),
+            })
+            return
+
+        # Set controlled=true
+        metadata = dict(monster.metadata_ or {})
+        metadata["controlled"] = True
+        self._apply_metadata(monster, metadata, updates)
+
+        name = metadata.get("name", "Monster")
+        events.append({
+            "type": "monster_controlled",
+            "message": f"Now controlling {name}",
+            "target_player_id": str(intent.player_id),
         })
 
     def _handle_recording_start(
@@ -1043,26 +1127,26 @@ class MonsterWorkshopGame:
                 new_x = monster.x + dx
                 new_y = monster.y + dy
                 if not self._is_in_bounds(new_x, new_y, monster, zone_width, zone_height):
-                    self._stop_autorepeat(monster, updates)
+                    self._stop_autorepeat(monster, updates, events)
                     continue
                 if self._is_terrain_blocked(zone_def, new_x, new_y):
-                    self._stop_autorepeat(monster, updates)
+                    self._stop_autorepeat(monster, updates, events)
                     continue
 
                 blocker = self._find_blocker(entities, monster, new_x, new_y)
                 if action_type == "push":
                     if blocker is None:
-                        self._stop_autorepeat(monster, updates)
+                        self._stop_autorepeat(monster, updates, events)
                         continue
                     if self._entity_kind(blocker) not in PUSHABLE_KINDS:
-                        self._stop_autorepeat(monster, updates)
+                        self._stop_autorepeat(monster, updates, events)
                         continue
                     if blocker.metadata_ and blocker.metadata_.get("is_stored"):
-                        self._stop_autorepeat(monster, updates)
+                        self._stop_autorepeat(monster, updates, events)
                         continue
                     can_push, _ = self._can_monster_push(monster, blocker)
                     if not can_push:
-                        self._stop_autorepeat(monster, updates)
+                        self._stop_autorepeat(monster, updates, events)
                         continue
 
                     self._mark_active_push(blocker, monster.id, updates, active_pushes)
@@ -1082,7 +1166,7 @@ class MonsterWorkshopGame:
                         touched_dispensers=touched_dispensers,
                     ):
                         self._clear_active_push(blocker, updates, active_pushes)
-                        self._stop_autorepeat(monster, updates)
+                        self._stop_autorepeat(monster, updates, events)
                         continue
                     self._clear_active_push(blocker, updates, active_pushes)
                 else:
@@ -1091,7 +1175,7 @@ class MonsterWorkshopGame:
                         self._apply_move(monster, new_x, new_y, updates)
                         self._maybe_move_hitched_wagon(monster, old_x, old_y, entities, updates)
                     else:
-                        self._stop_autorepeat(monster, updates)
+                        self._stop_autorepeat(monster, updates, events)
                         continue
 
             current_task["play_index"] = (index + 1) % max(len(actions), 1)
@@ -1517,7 +1601,12 @@ class MonsterWorkshopGame:
         metadata["current_task"] = current_task
         self._apply_metadata(monster, metadata, updates)
 
-    def _stop_autorepeat(self, monster: Entity, updates: list[EntityUpdate]) -> None:
+    def _stop_autorepeat(
+        self,
+        monster: Entity,
+        updates: list[EntityUpdate],
+        events: list[dict[str, Any]],
+    ) -> None:
         metadata = dict(monster.metadata_ or {})
         current_task = dict(metadata.get("current_task") or {})
         current_task["is_playing"] = False
@@ -3624,12 +3713,24 @@ class MonsterWorkshopGame:
             for entity in entities:
                 if entity.id == monster.id:
                     continue
+                if self._is_phased_out(entity):
+                    continue
                 if self._rects_overlap(check_x, check_y, 1, 1, *self._entity_rect(entity)):
                     return entity
         return None
 
     def _entity_kind(self, entity: Entity) -> str | None:
         return (entity.metadata_ or {}).get("kind")
+
+    def _is_phased_out(self, entity: Entity) -> bool:
+        """Check if a monster is phased out (uncontrolled and not autorepeating)."""
+        metadata = entity.metadata_ or {}
+        if metadata.get("kind") != KIND_MONSTER:
+            return False
+        if metadata.get("controlled", True):
+            return False
+        current_task = metadata.get("current_task") or {}
+        return not current_task.get("is_playing", False)
 
     def _is_gathering_spot(self, entity: Entity) -> bool:
         if self._entity_kind(entity) == KIND_GATHERING:
@@ -3651,6 +3752,8 @@ class MonsterWorkshopGame:
     def _is_blocking(self, entity: Entity) -> bool:
         metadata = entity.metadata_ or {}
         if metadata.get("is_stored"):
+            return False
+        if self._is_phased_out(entity):
             return False
         if "blocks_movement" in metadata:
             return bool(metadata.get("blocks_movement"))
@@ -3757,7 +3860,7 @@ class MonsterWorkshopGame:
                 "actions": [],
                 "play_index": 0,
             },
-            "online": True,
+            "controlled": True,
             "created_at": datetime.utcnow().isoformat(),
         }
 
@@ -3772,7 +3875,8 @@ class MonsterWorkshopGame:
         if zone_def:
             spawn_points = zone_def.get("spawn_points") or []
         if not spawn_points:
-            spawn_points = [{"x": 2, "y": 2}]
+            # Default to center of zone
+            spawn_points = [{"x": zone_width // 2, "y": zone_height // 2}]
 
         for candidate in spawn_points:
             x = int(candidate.get("x", 0))
@@ -3783,7 +3887,8 @@ class MonsterWorkshopGame:
                 if self._find_blocker(entities, self._fake_entity(x, y), x, y) is None:
                     return x, y
 
-        return (2, 2)
+        # Fallback to center of zone
+        return (zone_width // 2, zone_height // 2)
 
     def _bootstrap_zone(
         self,

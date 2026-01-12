@@ -3,7 +3,7 @@
   "width": 60,
   "height": 20,
   "spawn_points": [
-    {"x": 3, "y": 3}
+    {"x": 30, "y": 10}
   ],
   "static_entities": [
     {

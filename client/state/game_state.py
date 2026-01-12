@@ -89,11 +89,29 @@ class GameState:
         return added_ids, updated_ids, removed_ids
 
     def _is_player_monster(self, entity_data: Dict) -> bool:
-        """Check if an entity is the player's monster."""
+        """Check if an entity is the player's actively controlled monster."""
         if entity_data.get("owner_id") != self.player_id:
             return False
         metadata = entity_data.get("metadata", {})
-        return metadata.get("monster_type") is not None
+        if metadata.get("monster_type") is None:
+            return False
+        # Only match controlled monsters (not phased-out ones)
+        return metadata.get("controlled", True)
+
+    def is_phased_out(self, entity_data: Dict) -> bool:
+        """Check if a monster is phased out (uncontrolled and not autorepeating).
+
+        Only applies to player's own monsters.
+        """
+        if entity_data.get("owner_id") != self.player_id:
+            return False
+        metadata = entity_data.get("metadata", {})
+        if metadata.get("kind") != "monster":
+            return False
+        if metadata.get("controlled", True):
+            return False
+        current_task = metadata.get("current_task", {})
+        return not current_task.get("is_playing", False)
 
     def _entity_changed(self, old: Dict, new: Dict) -> bool:
         """Check if entity data has meaningfully changed."""
@@ -174,37 +192,50 @@ class GameState:
 
         return adjacent
 
-    def get_facing_entity(self) -> Optional[Dict]:
-        """Get the entity the player monster is facing.
+    def get_nearby_entity(self) -> Optional[Dict]:
+        """Get a nearby entity for the context panel.
+
+        First checks the facing direction, then checks all adjacent cells
+        if nothing is in the facing direction.
 
         Returns:
-            Entity data dict, or None if nothing in facing direction.
+            Entity data dict, or None if nothing nearby.
         """
         monster = self.get_player_monster()
         if not monster:
             return None
 
+        # Priority order for entity kinds
+        priority = ["workshop", "gathering_spot", "wagon", "item", "dispenser", "delivery", "signpost", "monster"]
+
+        def pick_best(entities: list) -> Optional[Dict]:
+            """Pick the highest priority entity from a list."""
+            # Filter out the player's own monster
+            entities = [e for e in entities if e["id"] != self.local_monster_id]
+            if not entities:
+                return None
+            for kind in priority:
+                for entity in entities:
+                    if entity.get("metadata", {}).get("kind") == kind:
+                        return entity
+            return entities[0]
+
+        # First, check the facing direction
         dx, dy = DIRECTION_DELTAS.get(self.facing_direction, (0, 0))
         target_x = monster["x"] + dx
         target_y = monster["y"] + dy
+        facing_entities = self.get_entities_at(target_x, target_y)
+        result = pick_best(facing_entities)
+        if result:
+            return result
 
-        entities = self.get_entities_at(target_x, target_y)
+        # If nothing in facing direction, check all adjacent cells
+        adjacent = self.get_adjacent_entities(monster["x"], monster["y"])
+        return pick_best(adjacent)
 
-        # Filter out the player's own monster
-        entities = [e for e in entities if e["id"] != self.local_monster_id]
-
-        if not entities:
-            return None
-
-        # Prioritize by entity kind
-        priority = ["workshop", "gathering_spot", "wagon", "item", "dispenser", "delivery", "signpost", "monster"]
-
-        for kind in priority:
-            for entity in entities:
-                if entity.get("metadata", {}).get("kind") == kind:
-                    return entity
-
-        return entities[0] if entities else None
+    def get_facing_entity(self) -> Optional[Dict]:
+        """Alias for get_nearby_entity for backwards compatibility."""
+        return self.get_nearby_entity()
 
     def get_entities_by_kind(self, kind: str) -> List[Dict]:
         """Get all entities of a specific kind."""

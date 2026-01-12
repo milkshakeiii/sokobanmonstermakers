@@ -112,6 +112,22 @@ class SpriteFactory:
         for eid in list(self.sprites.keys()):
             self.remove_sprite(eid)
 
+    def _is_phased_out(self, entity: Dict) -> bool:
+        """Check if entity is a phased-out monster (uncontrolled and not autorepeating).
+
+        Phased-out monsters owned by the player should not be rendered.
+        """
+        metadata = entity.get("metadata", {})
+        if metadata.get("kind") != "monster":
+            return False
+        # Only check for our own monsters
+        if entity.get("owner_id") != self.player_id:
+            return False
+        if metadata.get("controlled", True):
+            return False
+        current_task = metadata.get("current_task", {})
+        return not current_task.get("is_playing", False)
+
     def sync_entities(
         self,
         added_ids: set,
@@ -131,15 +147,21 @@ class SpriteFactory:
         for eid in removed_ids:
             self.remove_sprite(eid)
 
-        # Update existing sprites
+        # Update existing sprites (or remove if now phased out)
         for eid in updated_ids:
             if eid in entities:
-                self.update_sprite(entities[eid])
+                entity = entities[eid]
+                if self._is_phased_out(entity):
+                    self.remove_sprite(eid)
+                else:
+                    self.update_sprite(entity)
 
-        # Create new sprites
+        # Create new sprites (skip phased-out monsters)
         for eid in added_ids:
             if eid in entities:
-                self.create_sprite(entities[eid])
+                entity = entities[eid]
+                if not self._is_phased_out(entity):
+                    self.create_sprite(entity)
 
     def _cache_key(self, entity: Dict) -> Dict:
         """Create a cache key for entity appearance.

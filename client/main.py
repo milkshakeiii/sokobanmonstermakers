@@ -1,5 +1,11 @@
 """Monster Workshop Client - Main entry point."""
 
+# TODO: Add "Commune Status" page that shows:
+#   - All monsters owned by the player (including phased-out ones)
+#   - Ability to select which monster to control
+#   - Commune resources/renown
+#   - Monster stats overview
+
 import logging
 import sys
 import os
@@ -297,12 +303,16 @@ class MonsterWorkshopClient:
             added, updated, removed, self.game_state.entities
         )
 
-        # Update lights for entities
+        # Update lights for entities (skip phased-out monsters)
         for eid in added | updated:
             entity = self.game_state.get_entity(eid)
             if entity:
-                self.light_manager.update_entity_light(eid, entity)
-                self.effects_manager.update_crafting_effect(eid, entity)
+                if self.game_state.is_phased_out(entity):
+                    self.light_manager.remove_entity_light(eid)
+                    self.effects_manager.remove_crafting_effect(eid)
+                else:
+                    self.light_manager.update_entity_light(eid, entity)
+                    self.effects_manager.update_crafting_effect(eid, entity)
 
         for eid in removed:
             self.light_manager.remove_entity_light(eid)
@@ -316,12 +326,12 @@ class MonsterWorkshopClient:
                 self.light_manager.create_player_torch(monster_sprite)
 
         # Check tutorial triggers
-        facing = self.game_state.get_facing_entity()
-        self.tutorial_manager.check_facing_entity(facing, self.game_state)
+        nearby = self.game_state.get_nearby_entity()
+        self.tutorial_manager.check_nearby_entity(nearby, self.game_state)
 
         # Show welcome hint on first sync
         if monster and "welcome" not in self.tutorial_manager.shown_hints:
-            self.tutorial_manager.show_bubble("Use WASD to move. Face objects to see info.", 0, 0)
+            self.tutorial_manager.show_bubble("Use WASD to move around.", 0, 0)
             self.tutorial_manager.shown_hints.add("welcome")
 
     def _handle_event(self, event: dict):
@@ -416,8 +426,8 @@ class MonsterWorkshopClient:
             is_playing=self.game_state.is_monster_playing(),
         )
 
-        facing_entity = self.game_state.get_facing_entity()
-        self.context_panel.render(facing_entity, self.game_state.facing_direction)
+        nearby_entity = self.game_state.get_nearby_entity()
+        self.context_panel.render(nearby_entity, self.game_state.facing_direction)
 
         # Render notifications
         self.notification_manager.render()
@@ -470,12 +480,13 @@ class MonsterWorkshopClient:
             True to consume the event
         """
         if event.type == pygame.KEYDOWN:
+            # Dismiss tutorial bubble on any key press first
+            if self.tutorial_manager.on_key_press():
+                return True  # Consume the key if bubble was dismissed
+
             # Get unicode character for text input
             unicode_char = event.unicode if hasattr(event, "unicode") else ""
             self.input_handler.handle_key(event.key, unicode_char)
-
-            # Dismiss tutorial on any key
-            self.tutorial_manager.dismiss()
 
             return True
 

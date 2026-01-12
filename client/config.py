@@ -135,8 +135,8 @@ class Color:
     LIGHT_COMMUNE = (255, 215, 0)
 
     # Speech bubble
-    BUBBLE_BORDER = (200, 200, 255)
-    BUBBLE_TEXT = (220, 220, 255)
+    BUBBLE_COLOR = (200, 200, 255)
+    BUBBLE_TEXT = (40, 40, 80)
 
 
 class Action(Enum):

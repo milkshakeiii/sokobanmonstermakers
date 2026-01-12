@@ -167,20 +167,20 @@ class NotificationManager:
 class SpeechBubble:
     """A speech bubble for tutorial hints."""
 
-    def __init__(self, text: str, target_x: int, target_y: int, duration: float = 5.0):
+    def __init__(self, text: str, target_x: int, target_y: int, dismiss_on_key: bool = True):
         """Initialize a speech bubble.
 
         Args:
             text: Bubble text content
             target_x: X position of target entity
             target_y: Y position of target entity
-            duration: How long to display
+            dismiss_on_key: If True, bubble stays until key press
         """
         self.text = text
         self.target_x = target_x
         self.target_y = target_y
-        self.created = time.time()
-        self.duration = duration
+        self.dismiss_on_key = dismiss_on_key
+        self.dismissed = False
 
         # Wrap text
         self.lines = self._wrap_text(text, max_width=22)
@@ -210,10 +210,14 @@ class SpeechBubble:
     @property
     def is_expired(self) -> bool:
         """Check if bubble should be removed."""
-        return time.time() - self.created >= self.duration
+        return self.dismissed
+
+    def dismiss(self):
+        """Dismiss this bubble."""
+        self.dismissed = True
 
     def render(self, window, offset_x: int = 0, offset_y: int = 0):
-        """Render the speech bubble.
+        """Render the speech bubble using wedge characters.
 
         Args:
             window: pyunicodegame window
@@ -228,22 +232,39 @@ class SpeechBubble:
             return
 
         width = max(len(line) for line in self.lines) + 2
-        color = Color.BUBBLE_BORDER
+        bubble_color = Color.BUBBLE_COLOR
+        text_color = Color.BUBBLE_TEXT
 
-        # Top border
-        window.put_string(screen_x, screen_y, "." + "-" * width + ".", color)
+        # Wedge characters for rounded corners
+        TL = chr(0x1FB3C + 5)   # 🭁
+        TR = chr(0x1FB3C + 16)  # 🭌
+        BL = chr(0x1FB3C + 22)  # 🭒
+        BR = chr(0x1FB3C + 33)  # 🭝
+        BLOCK = chr(0x2588)    # █
+        TAIL = chr(0x1FB3C + 29)  # 🭙
 
-        # Content
+        # Top border with rounded corners
+        window.put(screen_x, screen_y, TL, bubble_color)
+        for i in range(1, width + 1):
+            window.put(screen_x + i, screen_y, BLOCK, bubble_color)
+        window.put(screen_x + width + 1, screen_y, TR, bubble_color)
+
+        # Content rows with solid background (same color as border)
         for i, line in enumerate(self.lines):
-            padded = line.ljust(width - 2)
-            window.put_string(screen_x, screen_y + 1 + i, f"( {padded} )", color)
+            padded = line.ljust(width)
+            window.put(screen_x, screen_y + 1 + i, BLOCK, bubble_color)
+            window.put_string(screen_x + 1, screen_y + 1 + i, padded, text_color, bubble_color)
+            window.put(screen_x + width + 1, screen_y + 1 + i, BLOCK, bubble_color)
 
-        # Bottom border
-        window.put_string(screen_x, screen_y + len(self.lines) + 1, "`" + "-" * width + "'", color)
+        # Bottom border with rounded corners
+        bottom_y = screen_y + len(self.lines) + 1
+        window.put(screen_x, bottom_y, BL, bubble_color)
+        for i in range(1, width + 1):
+            window.put(screen_x + i, bottom_y, BLOCK, bubble_color)
+        window.put(screen_x + width + 1, bottom_y, BR, bubble_color)
 
-        # Pointer
-        pointer_x = screen_x + width // 2
-        window.put_string(pointer_x, screen_y + len(self.lines) + 2, "\\/", color)
+        # Tail pointing down
+        window.put(screen_x + 1, bottom_y + 1, TAIL, bubble_color)
 
 
 class TutorialManager:
@@ -260,23 +281,23 @@ class TutorialManager:
         self.active_bubble: Optional[SpeechBubble] = None
         self.active_text: Optional[str] = None
 
-    def check_facing_entity(self, facing_entity: Optional[dict], game_state):
+    def check_nearby_entity(self, nearby_entity: Optional[dict], game_state):
         """Check if a tutorial bubble should be shown.
 
         Args:
-            facing_entity: Entity the player is facing
+            nearby_entity: Entity near the player
             game_state: Current game state
         """
-        if facing_entity is None:
+        if nearby_entity is None:
             return
 
         if self.active_bubble and not self.active_bubble.is_expired:
             return
 
-        metadata = facing_entity.get("metadata", {})
+        metadata = nearby_entity.get("metadata", {})
         kind = metadata.get("kind")
-        x = facing_entity.get("x", 0)
-        y = facing_entity.get("y", 0)
+        x = nearby_entity.get("x", 0)
+        y = nearby_entity.get("y", 0)
 
         # Check triggers
         if kind == "item" and "push" not in self.shown_hints:
@@ -352,22 +373,57 @@ class TutorialManager:
 
         # Draw speech bubble
         width = max(len(line) for line in lines) + 2
-        color = Color.BUBBLE_BORDER
+        bubble_color = Color.BUBBLE_COLOR
+        text_color = Color.BUBBLE_TEXT
 
-        # Top border
-        window.put_string(bubble_x, bubble_y, "." + "-" * width + ".", color)
+        # Wedge characters for rounded corners
+        TL = chr(0x1FB3C + 5)   # 🭁
+        TR = chr(0x1FB3C + 16)  # 🭌
+        BL = chr(0x1FB3C + 22)  # 🭒
+        BR = chr(0x1FB3C + 33)  # 🭝
+        BLOCK = chr(0x2588)    # █
+        TAIL = chr(0x1FB3C + 29)  # 🭙
 
-        # Content lines
+        # Top border with rounded corners
+        window.put(bubble_x, bubble_y, TL, bubble_color)
+        for i in range(1, width + 1):
+            window.put(bubble_x + i, bubble_y, BLOCK, bubble_color)
+        window.put(bubble_x + width + 1, bubble_y, TR, bubble_color)
+
+        # Content lines with solid background (same color as border)
         for i, line in enumerate(lines):
-            padded = line.ljust(width - 2)
-            window.put_string(bubble_x, bubble_y + 1 + i, f"( {padded} )", color)
+            padded = line.ljust(width)
+            window.put(bubble_x, bubble_y + 1 + i, BLOCK, bubble_color)
+            window.put_string(bubble_x + 1, bubble_y + 1 + i, padded, text_color, bubble_color)
+            window.put(bubble_x + width + 1, bubble_y + 1 + i, BLOCK, bubble_color)
 
-        # Bottom border with pointer
-        window.put_string(bubble_x, bubble_y + len(lines) + 1, "`" + "-" * width + "'", color)
-        window.put_string(bubble_x, bubble_y + len(lines) + 2, " \\/", color)
+        # Bottom border with rounded corners
+        bottom_y = bubble_y + len(lines) + 1
+        window.put(bubble_x, bottom_y, BL, bubble_color)
+        for i in range(1, width + 1):
+            window.put(bubble_x + i, bottom_y, BLOCK, bubble_color)
+        window.put(bubble_x + width + 1, bottom_y, BR, bubble_color)
+
+        # Tail pointing down
+        window.put(bubble_x + 1, bottom_y + 1, TAIL, bubble_color)
+
+    def on_key_press(self) -> bool:
+        """Handle key press to dismiss bubble.
+
+        Returns:
+            True if a bubble was dismissed, False otherwise.
+        """
+        if self.active_bubble:
+            self.active_bubble.dismiss()
+            self.active_bubble = None
+            self.active_text = None
+            return True
+        return False
 
     def dismiss(self):
         """Dismiss the current bubble."""
+        if self.active_bubble:
+            self.active_bubble.dismiss()
         self.active_bubble = None
         self.active_text = None
 

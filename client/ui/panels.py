@@ -197,10 +197,8 @@ class ContextPanel:
 
     def _draw_empty(self, direction: str):
         """Draw message when nothing is nearby."""
-        y = 2
-        self.window.put_string(1, y, f"Facing: {direction}", Color.TEXT_MUTED)
-        y += 2
-        self.window.put_string(1, y, "Nothing here", Color.TEXT_SECONDARY)
+        y = 3
+        self.window.put_string(1, y, "Nothing nearby", Color.TEXT_SECONDARY)
 
     def _render_workshop(self, entity: Dict, metadata: Dict):
         """Render workshop information."""
