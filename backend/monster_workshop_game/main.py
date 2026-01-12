@@ -290,6 +290,9 @@ class MonsterWorkshopGame:
                     zone_def=zone_def,
                 )
 
+            elif action == "clear_movement":
+                self._handle_clear_movement(intent, entity_map, updates)
+
             else:
                 if action:
                     events.append({
@@ -297,6 +300,20 @@ class MonsterWorkshopGame:
                         "message": f"Unsupported action: {action}",
                         "target_player_id": str(intent.player_id),
                     })
+
+        self._process_movement_queues(
+            entities=entities,
+            entity_map=entity_map,
+            creates=creates,
+            updates=updates,
+            events=events,
+            deletes=deletes,
+            zone_width=zone_width,
+            zone_height=zone_height,
+            zone_def=zone_def,
+            active_pushes=active_pushes,
+            touched_dispensers=touched_dispensers,
+        )
 
         self._process_autorepeat(
             entities=entities,
@@ -399,6 +416,7 @@ class MonsterWorkshopGame:
         active_pushes: dict[UUID, UUID],
         touched_dispensers: set[UUID],
     ) -> None:
+        """Queue a movement step instead of moving immediately."""
         entity_id = self._parse_entity_id(intent.data.get("entity_id"))
         if entity_id is None:
             return
@@ -417,73 +435,65 @@ class MonsterWorkshopGame:
         if dx == 0 and dy == 0:
             return
 
-        new_x = entity.x + dx
-        new_y = entity.y + dy
+        # Get current queue
+        metadata = dict(entity.metadata_ or {})
+        current_task = dict(metadata.get("current_task") or {})
+        queue = list(current_task.get("movement_queue") or [])
 
-        if not self._is_in_bounds(new_x, new_y, entity, zone_width, zone_height):
+        # Calculate position after completing current queue
+        future_x, future_y = entity.x, entity.y
+        for step in queue:
+            future_x += step.get("dx", 0)
+            future_y += step.get("dy", 0)
+
+        # Check if next step would hit terrain/bounds
+        next_x = future_x + dx
+        next_y = future_y + dy
+
+        if not self._is_in_bounds(next_x, next_y, entity, zone_width, zone_height):
+            return  # Don't add step that goes out of bounds
+
+        if self._is_terrain_blocked(zone_def, next_x, next_y):
+            return  # Don't add step that hits terrain
+
+        # Check for fixed blocking entities (terrain_block, etc.) at target position
+        for other in entities:
+            if other.id == entity.id:
+                continue
+            other_kind = self._entity_kind(other)
+            # Only check fixed blockers - terrain entities that can't move
+            if other_kind == KIND_TERRAIN:
+                if self._rects_overlap(next_x, next_y, 1, 1, *self._entity_rect(other)):
+                    return  # Don't add step that hits terrain entity
+
+        # Add step to queue
+        queue.append({"dx": dx, "dy": dy})
+        current_task["movement_queue"] = queue
+        metadata["current_task"] = current_task
+        self._apply_metadata(entity, metadata, updates)
+
+    def _handle_clear_movement(
+        self,
+        intent: Intent,
+        entity_map: dict[UUID, Entity],
+        updates: list[EntityUpdate],
+    ) -> None:
+        """Clear the movement queue for a monster."""
+        entity_id = self._parse_entity_id(intent.data.get("entity_id"))
+        if entity_id is None:
             return
 
-        if self._is_terrain_blocked(zone_def, new_x, new_y):
+        entity = entity_map.get(entity_id)
+        if entity is None:
             return
 
-        blocker = self._find_blocker(entities, entity, new_x, new_y)
-        if blocker is None:
-            old_x, old_y = entity.x, entity.y
-            self._apply_move(entity, new_x, new_y, updates)
-            self._maybe_move_hitched_wagon(entity, old_x, old_y, entities, updates)
-            self._record_action(entity, "move", dx, dy, updates)
+        if entity.owner_id != intent.player_id:
             return
 
-        if self._entity_kind(blocker) not in PUSHABLE_KINDS:
+        if self._entity_kind(entity) != KIND_MONSTER:
             return
 
-        if blocker.metadata_ and blocker.metadata_.get("is_stored"):
-            return
-
-        if self._is_being_pushed_by_other(blocker, entity.id):
-            events.append({
-                "type": "blocked",
-                "message": "Item is already being pushed",
-                "target_player_id": str(intent.player_id),
-            })
-            return
-
-        can_push, reason = self._can_monster_push(entity, blocker)
-        if not can_push:
-            events.append({
-                "type": "blocked",
-                "message": reason,
-                "target_player_id": str(intent.player_id),
-            })
-            return
-
-        self._mark_active_push(blocker, entity.id, updates, active_pushes)
-
-        if not self._attempt_push(
-            entities=entities,
-            mover=entity,
-            pushed=blocker,
-            dx=dx,
-            dy=dy,
-            creates=creates,
-            updates=updates,
-            deletes=deletes,
-            zone_width=zone_width,
-            zone_height=zone_height,
-            zone_def=zone_def,
-            events=events,
-            touched_dispensers=touched_dispensers,
-        ):
-            self._clear_active_push(blocker, updates, active_pushes)
-            return
-
-        self._clear_active_push(blocker, updates, active_pushes)
-        self._record_action(entity, "push", dx, dy, updates)
-        events.append({
-            "type": "push",
-            "entity_id": str(blocker.id),
-            "target_player_id": str(intent.player_id),
-        })
+        self._clear_movement_queue(entity, updates)
 
     def _handle_spawn_monster(
         self,
@@ -1087,6 +1097,117 @@ class MonsterWorkshopGame:
             "entity_id": item_id,
             "target_player_id": str(intent.player_id),
         })
+
+    def _process_movement_queues(
+        self,
+        entities: list[Entity],
+        entity_map: dict[UUID, Entity],
+        creates: list[EntityCreate],
+        updates: list[EntityUpdate],
+        events: list[dict[str, Any]],
+        deletes: list[UUID],
+        zone_width: int,
+        zone_height: int,
+        zone_def: dict[str, Any] | None,
+        active_pushes: dict[UUID, UUID],
+        touched_dispensers: set[UUID],
+    ) -> None:
+        """Process one step from each monster's movement queue per tick."""
+        for monster in entities:
+            if self._entity_kind(monster) != KIND_MONSTER:
+                continue
+
+            metadata = monster.metadata_ or {}
+            current_task = metadata.get("current_task") or {}
+            queue = current_task.get("movement_queue") or []
+            if not queue:
+                continue
+
+            # Take the first step from the queue
+            step = queue[0]
+            dx = step.get("dx", 0)
+            dy = step.get("dy", 0)
+            if dx == 0 and dy == 0:
+                # Invalid step, remove it
+                queue = queue[1:]
+                self._update_movement_queue(monster, queue, updates)
+                continue
+
+            new_x = monster.x + dx
+            new_y = monster.y + dy
+
+            # Check bounds and terrain (shouldn't fail since we validated when adding)
+            if not self._is_in_bounds(new_x, new_y, monster, zone_width, zone_height):
+                self._clear_movement_queue(monster, updates)
+                continue
+            if self._is_terrain_blocked(zone_def, new_x, new_y):
+                self._clear_movement_queue(monster, updates)
+                continue
+
+            # Check for entity blocker
+            blocker = self._find_blocker(entities, monster, new_x, new_y)
+            if blocker is None:
+                # No blocker, move and pop from queue
+                old_x, old_y = monster.x, monster.y
+                self._apply_move(monster, new_x, new_y, updates)
+                self._maybe_move_hitched_wagon(monster, old_x, old_y, entities, updates)
+                queue = queue[1:]
+                self._update_movement_queue(monster, queue, updates)
+            elif self._entity_kind(blocker) in PUSHABLE_KINDS and not (blocker.metadata_ or {}).get("is_stored"):
+                # Pushable blocker, attempt push
+                can_push, _ = self._can_monster_push(monster, blocker)
+                if not can_push:
+                    self._clear_movement_queue(monster, updates)
+                    continue
+
+                self._mark_active_push(blocker, monster.id, updates, active_pushes)
+                if self._attempt_push(
+                    entities=entities,
+                    mover=monster,
+                    pushed=blocker,
+                    dx=dx,
+                    dy=dy,
+                    creates=creates,
+                    updates=updates,
+                    deletes=deletes,
+                    zone_width=zone_width,
+                    zone_height=zone_height,
+                    zone_def=zone_def,
+                    events=events,
+                    touched_dispensers=touched_dispensers,
+                ):
+                    # Push succeeded, pop from queue
+                    self._clear_active_push(blocker, updates, active_pushes)
+                    queue = queue[1:]
+                    self._update_movement_queue(monster, queue, updates)
+                else:
+                    # Push failed, clear queue
+                    self._clear_active_push(blocker, updates, active_pushes)
+                    self._clear_movement_queue(monster, updates)
+            else:
+                # Non-pushable, non-fixed blocker (e.g., another monster moved in the way), clear queue
+                self._clear_movement_queue(monster, updates)
+
+    def _update_movement_queue(
+        self,
+        monster: Entity,
+        queue: list[dict[str, int]],
+        updates: list[EntityUpdate],
+    ) -> None:
+        """Update the movement queue in monster metadata."""
+        metadata = dict(monster.metadata_ or {})
+        current_task = dict(metadata.get("current_task") or {})
+        current_task["movement_queue"] = queue
+        metadata["current_task"] = current_task
+        self._apply_metadata(monster, metadata, updates)
+
+    def _clear_movement_queue(
+        self,
+        monster: Entity,
+        updates: list[EntityUpdate],
+    ) -> None:
+        """Clear the monster's movement queue."""
+        self._update_movement_queue(monster, [], updates)
 
     def _process_autorepeat(
         self,

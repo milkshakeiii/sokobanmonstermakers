@@ -127,7 +127,7 @@ class Color:
     WAGON = (139, 90, 43)
 
     # Lighting
-    AMBIENT = (30, 30, 50)
+    AMBIENT = (80, 80, 100)
     LIGHT_TORCH = (255, 200, 150)
     LIGHT_WORKSHOP = (255, 180, 100)
     LIGHT_GATHERING = (150, 255, 150)
