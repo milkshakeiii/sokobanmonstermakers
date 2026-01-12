@@ -230,17 +230,16 @@ class MonsterWorkshopClient:
         )
         self.ui_overlay_window.visible = False
 
-        # Disable lighting on game window until performance is improved
-        # (lighting was taking 20ms per frame for an 80x40 grid)
-        self.game_window.set_lighting(enabled=False, ambient=Color.AMBIENT)
+        # Enable lighting on game window (optimized with numpy vectorization)
+        self.game_window.set_lighting(enabled=True, ambient=Color.AMBIENT)
 
     def _init_subsystems(self):
         """Initialize rendering and UI subsystems."""
         # Sprite factory
         self.sprite_factory = SpriteFactory(self.game_window, self.network.player_id)
 
-        # Light manager - disabled until performance is improved
-        self.light_manager = LightManager(self.game_window, enabled=False)
+        # Light manager (optimized with numpy vectorization)
+        self.light_manager = LightManager(self.game_window, enabled=True)
 
         # Effects manager
         self.effects_manager = EffectsManager(self.game_window)
