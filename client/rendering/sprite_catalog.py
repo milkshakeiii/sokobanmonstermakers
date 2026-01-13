@@ -372,8 +372,9 @@ def get_gathering_spot_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[
     Returns:
         Tuple of (pattern, color)
     """
-    # Get the gathered good type
-    good_type = metadata.get("gathered_good_type", "").lower()
+    # Get the gathered good type (try both key names)
+    good_type = metadata.get("gathered_good_type", "") or metadata.get("gathering_good_type", "")
+    good_type = good_type.lower()
 
     # Determine center icon based on good type
     if "cotton" in good_type:
