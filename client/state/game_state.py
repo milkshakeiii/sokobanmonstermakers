@@ -415,23 +415,29 @@ class GameState:
         # Server executes from front, so server queue should match a suffix of client queue
         # But client may also have added predictions beyond what server knows
 
-        # Check each possible alignment point
+        def check_alignment(offset: int) -> bool:
+            """Check if server queue matches client queue starting at offset."""
+            for i in range(server_len):
+                s_step = server_queue[i]
+                c_step = self.predicted_queue[offset + i]
+                if s_step.get("dx") != c_step.get("dx") or s_step.get("dy") != c_step.get("dy"):
+                    return False
+            return True
+
+        # First, check the most likely scenario: server executed some moves
+        # Expected offset = number of moves executed = client_len - server_len
+        if client_len >= server_len:
+            expected_offset = client_len - server_len
+            if check_alignment(expected_offset):
+                self.predicted_queue = self.predicted_queue[expected_offset:]
+                return
+
+        # Fall back: check other alignments (client may have added predictions)
         for offset in range(client_len):
             remaining_client = client_len - offset
-            # Check if server queue matches client queue starting at offset
-            if remaining_client >= server_len:
-                matches = True
-                for i in range(server_len):
-                    s_step = server_queue[i]
-                    c_step = self.predicted_queue[offset + i]
-                    if s_step.get("dx") != c_step.get("dx") or s_step.get("dy") != c_step.get("dy"):
-                        matches = False
-                        break
-
-                if matches:
-                    # Found alignment - trim executed moves, keep predictions
-                    self.predicted_queue = self.predicted_queue[offset:]
-                    return
+            if remaining_client >= server_len and check_alignment(offset):
+                self.predicted_queue = self.predicted_queue[offset:]
+                return
 
         # No alignment found - accept server's authoritative state
         self.predicted_queue = list(server_queue)

@@ -165,6 +165,8 @@ class Action(Enum):
     # UI
     QUIT = auto()
     TOGGLE_HELP = auto()
+    TOGGLE_FULLSCREEN = auto()
+    CLEAR_PATH = auto()
     CANCEL = auto()
     CONFIRM = auto()
 
@@ -200,7 +202,9 @@ DEFAULT_KEYBINDS: Dict[int, Action] = {
     # UI
     pygame.K_q: Action.QUIT,
     pygame.K_ESCAPE: Action.CANCEL,
+    pygame.K_BACKSPACE: Action.CLEAR_PATH,
     pygame.K_F1: Action.TOGGLE_HELP,
+    pygame.K_F11: Action.TOGGLE_FULLSCREEN,
     pygame.K_RETURN: Action.CONFIRM,
 }
 

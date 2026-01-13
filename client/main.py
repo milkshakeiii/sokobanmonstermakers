@@ -147,6 +147,9 @@ class MonsterWorkshopClient:
             bg=(10, 10, 20, 255),
         )
 
+        # Start in fullscreen
+        pyunicodegame._toggle_fullscreen()
+
         # Create windows
         self._create_windows()
 
@@ -521,6 +524,10 @@ class MonsterWorkshopClient:
             pyunicodegame.quit()
             return
 
+        if action == Action.TOGGLE_FULLSCREEN:
+            pyunicodegame._toggle_fullscreen()
+            return
+
         # Most actions require a monster
         if not monster_id:
             self.notification_manager.add_warning("No monster - press [N] to spawn")
@@ -534,6 +541,11 @@ class MonsterWorkshopClient:
                 # Add to predicted queue for immediate trail feedback
                 self.game_state.add_predicted_step(direction)
                 self.network.send_move(direction, monster_id)
+
+        # Clear path
+        elif action == Action.CLEAR_PATH:
+            self.game_state.clear_predicted_queue()
+            self.network.send_clear_path(monster_id)
 
         # Interact
         elif action == Action.INTERACT:

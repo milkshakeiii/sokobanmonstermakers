@@ -229,6 +229,10 @@ class NetworkClient:
         """Unload an item from the hitched wagon."""
         self.send_intent("unload_wagon")
 
+    def send_clear_path(self, entity_id: str):
+        """Clear the movement queue."""
+        self.send_intent("clear_movement", entity_id=entity_id)
+
     def get_latest_state(self) -> Optional[Dict]:
         """Get the most recent state update, if any.
 
