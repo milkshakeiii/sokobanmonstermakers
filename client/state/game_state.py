@@ -27,6 +27,11 @@ class GameState:
         self.player_has_pushed: bool = False
         self.player_has_recorded: bool = False
 
+        # Movement prediction queue (client-side, for immediate trail feedback)
+        self.predicted_queue: List[Dict[str, int]] = []
+        self.zone_width: int = 60
+        self.zone_height: int = 40
+
     def set_player_id(self, player_id: str):
         """Set the player's ID."""
         self.player_id = player_id
@@ -302,3 +307,163 @@ class GameState:
 
         current_task = monster.get("metadata", {}).get("current_task", {})
         return current_task.get("is_playing", False)
+
+    # --- Movement Prediction Queue Methods ---
+
+    def add_predicted_step(self, direction: str) -> bool:
+        """Add a step to the predicted queue if valid.
+
+        Args:
+            direction: Direction string ("up", "down", "left", "right")
+
+        Returns:
+            True if step was added, False if rejected (blocked).
+        """
+        monster = self.get_player_monster()
+        if not monster:
+            return False
+
+        dx, dy = DIRECTION_DELTAS.get(direction, (0, 0))
+        if dx == 0 and dy == 0:
+            return False
+
+        # Calculate future position after completing current queue
+        future_x, future_y = monster["x"], monster["y"]
+        for step in self.predicted_queue:
+            future_x += step.get("dx", 0)
+            future_y += step.get("dy", 0)
+
+        next_x = future_x + dx
+        next_y = future_y + dy
+
+        # Validate bounds
+        if not self._is_in_bounds(next_x, next_y):
+            return False
+
+        # Validate terrain
+        if self._is_terrain_at(next_x, next_y):
+            return False
+
+        # Add to queue
+        self.predicted_queue.append({"dx": dx, "dy": dy})
+        return True
+
+    def get_trail_positions(self) -> List[Tuple[int, int, str, Optional[str], bool, bool]]:
+        """Get positions for trail rendering.
+
+        Returns:
+            List of (x, y, incoming_dir, outgoing_dir, is_second_to_last, is_last) tuples.
+            - incoming_dir: direction we moved to reach this cell
+            - outgoing_dir: direction of next move (None if last)
+        """
+        monster = self.get_player_monster()
+        if not monster or not self.predicted_queue:
+            return []
+
+        positions = []
+        x, y = monster["x"], monster["y"]
+        queue_len = len(self.predicted_queue)
+
+        for i, step in enumerate(self.predicted_queue):
+            dx = step.get("dx", 0)
+            dy = step.get("dy", 0)
+            incoming_dir = self._delta_to_direction(dx, dy)
+
+            x += dx
+            y += dy
+
+            # Look ahead to get outgoing direction
+            if i + 1 < queue_len:
+                next_step = self.predicted_queue[i + 1]
+                outgoing_dir = self._delta_to_direction(
+                    next_step.get("dx", 0), next_step.get("dy", 0)
+                )
+            else:
+                outgoing_dir = None
+
+            is_second_to_last = (i == queue_len - 2)
+            is_last = (i == queue_len - 1)
+            positions.append((x, y, incoming_dir, outgoing_dir, is_second_to_last, is_last))
+
+        return positions
+
+    def sync_predicted_queue(self, server_queue: List[Dict[str, int]]):
+        """Sync local prediction with server state.
+
+        Uses smart reconciliation to handle:
+        1. Server executed moves (server queue is suffix of client queue)
+        2. Client added predictions (client queue extends past server queue)
+        3. Server corrections (queues differ - accept server state)
+
+        Args:
+            server_queue: The movement queue from the server.
+        """
+        server_len = len(server_queue)
+        client_len = len(self.predicted_queue)
+
+        # If server queue is empty, clear our predictions
+        if server_len == 0:
+            self.predicted_queue = []
+            return
+
+        # If client queue is empty, accept server state
+        if client_len == 0:
+            self.predicted_queue = list(server_queue)
+            return
+
+        # Try to find where server queue aligns with client queue
+        # Server executes from front, so server queue should match a suffix of client queue
+        # But client may also have added predictions beyond what server knows
+
+        # Check each possible alignment point
+        for offset in range(client_len):
+            remaining_client = client_len - offset
+            # Check if server queue matches client queue starting at offset
+            if remaining_client >= server_len:
+                matches = True
+                for i in range(server_len):
+                    s_step = server_queue[i]
+                    c_step = self.predicted_queue[offset + i]
+                    if s_step.get("dx") != c_step.get("dx") or s_step.get("dy") != c_step.get("dy"):
+                        matches = False
+                        break
+
+                if matches:
+                    # Found alignment - trim executed moves, keep predictions
+                    self.predicted_queue = self.predicted_queue[offset:]
+                    return
+
+        # No alignment found - accept server's authoritative state
+        self.predicted_queue = list(server_queue)
+
+    def clear_predicted_queue(self):
+        """Clear the prediction queue."""
+        self.predicted_queue = []
+
+    def _is_in_bounds(self, x: int, y: int) -> bool:
+        """Check if position is within zone bounds."""
+        return 0 <= x < self.zone_width and 0 <= y < self.zone_height
+
+    def _is_terrain_at(self, x: int, y: int) -> bool:
+        """Check if there's a terrain block at position."""
+        for entity in self.entities.values():
+            metadata = entity.get("metadata", {})
+            if metadata.get("kind") == "terrain_block":
+                ex, ey = entity["x"], entity["y"]
+                ew = entity.get("width", 1)
+                eh = entity.get("height", 1)
+                if ex <= x < ex + ew and ey <= y < ey + eh:
+                    return True
+        return False
+
+    def _delta_to_direction(self, dx: int, dy: int) -> str:
+        """Convert delta to direction string."""
+        if dx > 0:
+            return "right"
+        if dx < 0:
+            return "left"
+        if dy > 0:
+            return "down"
+        if dy < 0:
+            return "up"
+        return "down"

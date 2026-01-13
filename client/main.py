@@ -40,6 +40,7 @@ from state.game_state import GameState
 from input.handlers import InputHandler, InputState
 from rendering.sprites import SpriteFactory, LightManager
 from rendering.effects import EffectsManager
+from rendering.trail import TrailRenderer
 from ui.panels import MonsterPanel, ContextPanel
 from ui.dialogs import SpawnDialog, RecipeDialog, HelpOverlay
 from ui.notifications import NotificationManager, TutorialManager
@@ -74,6 +75,7 @@ class MonsterWorkshopClient:
         self.sprite_factory = None
         self.light_manager = None
         self.effects_manager = None
+        self.trail_renderer = None
 
         # UI systems
         self.monster_panel = None
@@ -250,6 +252,9 @@ class MonsterWorkshopClient:
         # Effects manager
         self.effects_manager = EffectsManager(self.game_window)
 
+        # Trail renderer (for movement queue visualization)
+        self.trail_renderer = TrailRenderer(self.game_overlay_window)
+
         # UI panels
         self.monster_panel = MonsterPanel(self.monster_panel_window)
         self.context_panel = ContextPanel(self.context_panel_window)
@@ -324,6 +329,12 @@ class MonsterWorkshopClient:
             monster_sprite = self.sprite_factory.get_sprite(self.game_state.local_monster_id)
             if monster_sprite and not self.light_manager.player_light:
                 self.light_manager.create_player_torch(monster_sprite)
+
+        # Sync predicted movement queue with server state
+        if monster:
+            current_task = monster.get("metadata", {}).get("current_task", {})
+            server_queue = current_task.get("movement_queue", [])
+            self.game_state.sync_predicted_queue(server_queue)
 
         # Check tutorial triggers
         nearby = self.game_state.get_nearby_entity()
@@ -417,6 +428,11 @@ class MonsterWorkshopClient:
         # Clear the game overlay (transparent background)
         if self.game_overlay_window:
             self.game_overlay_window.surface.fill((0, 0, 0, 0))
+
+        # Render movement trail on overlay
+        if self.trail_renderer:
+            trail_positions = self.game_state.get_trail_positions()
+            self.trail_renderer.render(trail_positions)
 
         # Render UI panels
         monster = self.game_state.get_player_monster()
@@ -515,6 +531,8 @@ class MonsterWorkshopClient:
             direction = extra_data.get("direction")
             if direction:
                 self.game_state.update_facing(direction)
+                # Add to predicted queue for immediate trail feedback
+                self.game_state.add_predicted_step(direction)
                 self.network.send_move(direction, monster_id)
 
         # Interact

@@ -266,6 +266,30 @@ NOTIFICATION_DURATION = 4.0  # Seconds
 BUBBLE_DURATION = 5.0  # Seconds for speech bubbles
 
 
+# Movement trail rendering
+TRAIL_COLOR = (100, 150, 200)  # Muted blue
+
+# Box-drawing characters for trail
+TRAIL_HORIZONTAL = "─"
+TRAIL_VERTICAL = "│"
+TRAIL_CORNERS = {
+    ("right", "up"): "┘",
+    ("right", "down"): "┐",
+    ("left", "up"): "└",
+    ("left", "down"): "┌",
+    ("up", "right"): "┌",
+    ("up", "left"): "┐",
+    ("down", "right"): "└",
+    ("down", "left"): "┘",
+}
+TRAIL_ARROWS = {
+    "right": "→",
+    "left": "←",
+    "up": "↑",
+    "down": "↓",
+}
+
+
 # Quality thresholds
 QUALITY_MASTERWORK = 90
 QUALITY_FINE = 70
