@@ -266,7 +266,7 @@ class ContextPanel:
         self.window.put_string(1, y, "GATHERING SPOT", Color.TEXT_HIGHLIGHT)
         y += 2
 
-        good_type = metadata.get("gathered_good_type", "Unknown")
+        good_type = metadata.get("gathering_good_type") or metadata.get("gathered_good_type", "Unknown")
         self.window.put_string(1, y, f"Produces:", Color.TEXT_MUTED)
         y += 1
         self.window.put_string(2, y, good_type, Color.TEXT_PRIMARY)
