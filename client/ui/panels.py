@@ -171,6 +171,8 @@ class ContextPanel:
             self._render_wagon(entity, metadata)
         elif kind == "dispenser":
             self._render_dispenser(entity, metadata)
+        elif kind == "container":
+            self._render_container(entity, metadata)
         elif kind == "delivery":
             self._render_delivery(entity, metadata)
         elif kind == "signpost":
@@ -211,6 +213,19 @@ class ContextPanel:
         self.window.put_string(1, y, workshop_type.title(), Color.TEXT_PRIMARY)
         y += 2
 
+        # Check for blocked output first (high priority status)
+        if metadata.get("is_blocked"):
+            self.window.put_string(1, y, "! BLOCKED !", Color.ERROR)
+            y += 1
+            blocked_reason = metadata.get("blocked_reason", "Output spot occupied")
+            self.window.put_string(1, y, blocked_reason[:self.width - 2], Color.TEXT_MUTED)
+            y += 1
+            pending = metadata.get("pending_outputs", [])
+            if pending:
+                self.window.put_string(1, y, f"Pending: {len(pending)} item(s)", Color.WARNING)
+                y += 1
+            y += 1
+
         # Recipe
         recipe = metadata.get("selected_recipe_id")
         if recipe:
@@ -230,7 +245,7 @@ class ContextPanel:
                 missing_tools = metadata.get("missing_tools", [])
 
                 if missing_inputs or missing_tools:
-                    self.window.put_string(1, y, "Status: Blocked", Color.WARNING)
+                    self.window.put_string(1, y, "Status: Waiting", Color.WARNING)
                     y += 2
 
                     if missing_inputs:
@@ -365,6 +380,33 @@ class ContextPanel:
         capacity = metadata.get("capacity", 10)
         stored = len(metadata.get("stored_item_ids", []))
         self.window.put_string(1, y, f"Items: {stored}/{capacity}", Color.TEXT_SECONDARY)
+
+    def _render_container(self, entity: Dict, metadata: Dict):
+        """Render container information."""
+        y = 1
+
+        self.window.put_string(1, y, "CONTAINER", Color.TEXT_HIGHLIGHT)
+        y += 2
+
+        good_type = metadata.get("stored_good_type", "Various")
+        self.window.put_string(1, y, f"Stores: {good_type}", Color.TEXT_PRIMARY)
+        y += 1
+
+        capacity = metadata.get("capacity", 10)
+        stored = len(metadata.get("stored_item_ids", []))
+        self.window.put_string(1, y, f"Items: {stored}/{capacity}", Color.TEXT_SECONDARY)
+        y += 2
+
+        # Show top item if any
+        top_item = metadata.get("top_item_name")
+        if top_item:
+            self.window.put_string(1, y, "Next: ", Color.TEXT_MUTED)
+            self.window.put_string(7, y, top_item[:self.width - 9], Color.TEXT_PRIMARY)
+            y += 1
+
+        # Controls hint
+        y = self.height - 3
+        self.window.put_string(1, y, "[E] Dispense item", Color.TEXT_HIGHLIGHT)
 
     def _render_delivery(self, entity: Dict, metadata: Dict):
         """Render delivery zone information."""

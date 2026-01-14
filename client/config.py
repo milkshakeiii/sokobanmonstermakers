@@ -120,6 +120,7 @@ class Color:
 
     GATHERING_SPOT = (100, 180, 100)
     DISPENSER = (100, 100, 255)
+    CONTAINER = (139, 119, 101)  # Brown wooden crate color
     SIGNPOST = (255, 255, 100)
     DELIVERY = (100, 255, 100)
     COMMUNE = (255, 200, 100)

@@ -28,6 +28,7 @@ KIND_ITEM = "item"
 KIND_WORKSHOP = "workshop"
 KIND_GATHERING = "gathering_spot"
 KIND_DISPENSER = "dispenser"
+KIND_CONTAINER = "container"
 KIND_WAGON = "wagon"
 KIND_TERRAIN = "terrain_block"
 KIND_SIGNPOST = "signpost"
@@ -39,6 +40,7 @@ BLOCKING_KINDS = {
     KIND_WORKSHOP,
     KIND_GATHERING,
     KIND_DISPENSER,
+    KIND_CONTAINER,
     KIND_WAGON,
     KIND_TERRAIN,
     KIND_DELIVERY,
@@ -46,6 +48,7 @@ BLOCKING_KINDS = {
 
 PUSHABLE_KINDS = {
     KIND_ITEM,
+    KIND_CONTAINER,
 }
 
 DIR_TO_DELTA = {
@@ -58,6 +61,18 @@ DIR_TO_DELTA = {
 ABILITY_KEYS = ("str", "dex", "con", "int", "wis", "cha")
 DEFAULT_ITEM_SIZE = (2, 1)
 DEFAULT_CONTAINER_CAPACITY = 20
+
+# Workshop sizes by type (width, height)
+DEFAULT_WORKSHOP_SIZES = {
+    "spinning": (6, 6),
+    "weaving": (8, 6),
+    "dyeing": (6, 6),
+    "smithing": (8, 8),
+    "pottery": (6, 6),
+    "milling": (6, 6),
+    "sericulture": (8, 6),
+    "default": (6, 6),
+}
 
 GAME_TIME_MULTIPLIER = 30
 UPKEEP_CYCLE_DAYS = 28
@@ -270,7 +285,16 @@ class MonsterWorkshopGame:
                 self._handle_select_recipe(intent, entity_map, updates, events, tick_number, entities)
 
             elif action == "interact":
-                self._handle_interact(intent, entities, entity_map, events)
+                self._handle_interact(
+                    intent=intent,
+                    entities=entities,
+                    entity_map=entity_map,
+                    updates=updates,
+                    events=events,
+                    zone_width=zone_width,
+                    zone_height=zone_height,
+                    zone_def=zone_def,
+                )
 
             elif action == "hitch_wagon":
                 self._handle_hitch_wagon(intent, entities, entity_map, updates, events)
@@ -453,8 +477,8 @@ class MonsterWorkshopGame:
         if not self._is_in_bounds(next_x, next_y, entity, zone_width, zone_height):
             return  # Don't add step that goes out of bounds
 
-        if self._is_terrain_blocked(zone_def, next_x, next_y):
-            return  # Don't add step that hits terrain
+        if self._is_terrain_blocked(zone_def, next_x, next_y, entities):
+            return  # Don't add step that hits terrain or workshop wall
 
         # Check for fixed blocking entities (terrain_block, etc.) at target position
         for other in entities:
@@ -898,7 +922,11 @@ class MonsterWorkshopGame:
         intent: Intent,
         entities: list[Entity],
         entity_map: dict[UUID, Entity],
+        updates: list[EntityUpdate],
         events: list[dict[str, Any]],
+        zone_width: int,
+        zone_height: int,
+        zone_def: dict[str, Any] | None,
     ) -> None:
         monster = self._get_owned_monster(intent, entity_map)
         if monster is None:
@@ -919,11 +947,142 @@ class MonsterWorkshopGame:
             })
             return
 
+        # Handle container interaction - dispense one item
+        target_kind = self._entity_kind(target)
+        if target_kind in (KIND_CONTAINER, KIND_DISPENSER):
+            self._dispense_from_container(
+                container=target,
+                monster=monster,
+                entities=entities,
+                updates=updates,
+                events=events,
+                zone_width=zone_width,
+                zone_height=zone_height,
+                zone_def=zone_def,
+                player_id=intent.player_id,
+            )
+            return
+
         events.append({
             "type": "interact",
             "entity_id": str(target.id),
             "target_player_id": str(intent.player_id),
         })
+
+    def _dispense_from_container(
+        self,
+        container: Entity,
+        monster: Entity,
+        entities: list[Entity],
+        updates: list[EntityUpdate],
+        events: list[dict[str, Any]],
+        zone_width: int,
+        zone_height: int,
+        zone_def: dict[str, Any] | None,
+        player_id: UUID,
+    ) -> None:
+        """Dispense one item from a container to an adjacent empty spot."""
+        # Get stored items in this container
+        stored_items = self._get_container_stored_items(entities, container)
+        if not stored_items:
+            events.append({
+                "type": "info",
+                "message": "Container is empty",
+                "target_player_id": str(player_id),
+            })
+            return
+
+        # Find an adjacent empty spot for the dispensed item
+        dispense_cell = self._find_dispense_cell(
+            container, monster, entities, zone_width, zone_height, zone_def
+        )
+        if dispense_cell is None:
+            events.append({
+                "type": "error",
+                "message": "No space to dispense item",
+                "target_player_id": str(player_id),
+            })
+            return
+
+        # Dispense the top item (FIFO)
+        item = stored_items[0]
+        item_metadata = dict(item.metadata_ or {})
+        item_metadata["is_stored"] = False
+        item_metadata.pop("container_id", None)
+        item_metadata.pop("stored_slot", None)
+
+        dispense_x, dispense_y = dispense_cell
+        self._apply_move(item, dispense_x, dispense_y, updates)
+        self._apply_metadata(item, item_metadata, updates)
+
+        events.append({
+            "type": "dispense",
+            "container_id": str(container.id),
+            "item_id": str(item.id),
+            "target_player_id": str(player_id),
+        })
+
+    def _get_container_stored_items(
+        self,
+        entities: list[Entity],
+        container: Entity,
+    ) -> list[Entity]:
+        """Get all items stored in a container, ordered by position (FIFO)."""
+        container_id = str(container.id)
+        stored = []
+        for entity in entities:
+            if self._entity_kind(entity) != KIND_ITEM:
+                continue
+            metadata = entity.metadata_ or {}
+            if metadata.get("container_id") == container_id and metadata.get("is_stored"):
+                stored.append(entity)
+        # Sort by stored_slot position for consistent FIFO ordering
+        stored.sort(key=lambda e: (
+            (e.metadata_ or {}).get("stored_slot", {}).get("y", 0),
+            (e.metadata_ or {}).get("stored_slot", {}).get("x", 0),
+        ))
+        return stored
+
+    def _find_dispense_cell(
+        self,
+        container: Entity,
+        monster: Entity,
+        entities: list[Entity],
+        zone_width: int,
+        zone_height: int,
+        zone_def: dict[str, Any] | None,
+    ) -> tuple[int, int] | None:
+        """Find an empty cell adjacent to the container to dispense an item."""
+        cx, cy = container.x, container.y
+        cw, ch = self._entity_size(container)
+
+        # Check cells adjacent to container, preferring the side near the monster
+        mx, my = monster.x, monster.y
+        adjacent_cells = []
+
+        # Collect all adjacent cells
+        for x in range(cx - 1, cx + cw + 1):
+            for y in range(cy - 1, cy + ch + 1):
+                # Skip cells inside container
+                if cx <= x < cx + cw and cy <= y < cy + ch:
+                    continue
+                # Skip out of bounds
+                if x < 0 or y < 0 or x >= zone_width or y >= zone_height:
+                    continue
+                adjacent_cells.append((x, y))
+
+        # Sort by distance to monster (prefer closer)
+        adjacent_cells.sort(key=lambda c: abs(c[0] - mx) + abs(c[1] - my))
+
+        # Find first available cell
+        for x, y in adjacent_cells:
+            if self._is_terrain_blocked(zone_def, x, y, entities):
+                continue
+            if self._find_blocker(entities, self._fake_entity(x, y), x, y) is not None:
+                continue
+            return (x, y)
+
+        return None
 
     def _handle_hitch_wagon(
         self,
@@ -1140,7 +1299,7 @@ class MonsterWorkshopGame:
             if not self._is_in_bounds(new_x, new_y, monster, zone_width, zone_height):
                 self._clear_movement_queue(monster, updates)
                 continue
-            if self._is_terrain_blocked(zone_def, new_x, new_y):
+            if self._is_terrain_blocked(zone_def, new_x, new_y, entities):
                 self._clear_movement_queue(monster, updates)
                 continue
 
@@ -1250,7 +1409,7 @@ class MonsterWorkshopGame:
                 if not self._is_in_bounds(new_x, new_y, monster, zone_width, zone_height):
                     self._stop_autorepeat(monster, updates, events)
                     continue
-                if self._is_terrain_blocked(zone_def, new_x, new_y):
+                if self._is_terrain_blocked(zone_def, new_x, new_y, entities):
                     self._stop_autorepeat(monster, updates, events)
                     continue
 
@@ -1321,6 +1480,9 @@ class MonsterWorkshopGame:
         for workshop in entities:
             if self._entity_kind(workshop) not in (KIND_WORKSHOP, KIND_GATHERING):
                 continue
+
+            # Process any pending outputs first (from blocked state)
+            self._process_pending_outputs(workshop, entities, creates, updates)
 
             metadata = dict(workshop.metadata_ or {})
             is_gathering = self._is_gathering_spot(workshop)
@@ -1506,6 +1668,35 @@ class MonsterWorkshopGame:
                 dy = 0
             self._apply_move(item, new_x + dx, new_y + dy, updates)
 
+    def _apply_container_move(
+        self,
+        container: Entity,
+        new_x: int,
+        new_y: int,
+        entities: list[Entity],
+        updates: list[EntityUpdate],
+    ) -> None:
+        """Move a container and all its stored items."""
+        old_x, old_y = container.x, container.y
+        self._apply_move(container, new_x, new_y, updates)
+        self._move_container_contents(container, old_x, old_y, new_x, new_y, entities, updates)
+
+    def _move_container_contents(
+        self,
+        container: Entity,
+        old_x: int,
+        old_y: int,
+        new_x: int,
+        new_y: int,
+        entities: list[Entity],
+        updates: list[EntityUpdate],
+    ) -> None:
+        """Move all items stored in a container by the same offset."""
+        dx = new_x - old_x
+        dy = new_y - old_y
+        for item in self._get_container_stored_items(entities, container):
+            self._apply_move(item, item.x + dx, item.y + dy, updates)
+
     def _get_container_capacity(self, container: Entity) -> int:
         metadata = container.metadata_ or {}
         capacity = metadata.get("capacity")
@@ -1660,7 +1851,7 @@ class MonsterWorkshopGame:
                     continue
                 if x < 0 or y < 0 or x >= zone_width or y >= zone_height:
                     continue
-                if self._is_terrain_blocked(zone_def, x, y):
+                if self._is_terrain_blocked(zone_def, x, y, entities):
                     continue
                 blocker = self._find_blocker(entities, self._fake_entity(x, y), x, y)
                 if blocker is not None:
@@ -2524,6 +2715,8 @@ class MonsterWorkshopGame:
                 tool_creators.append(creator_id)
 
         container = self._find_entity_at_kind(entities, KIND_DISPENSER, anchor_x, anchor_y)
+        if container is None:
+            container = self._find_entity_at_kind(entities, KIND_CONTAINER, anchor_x, anchor_y)
         container_metadata = dict(container.metadata_ or {}) if container else None
         container_capacity = self._get_container_capacity(container) if container else 0
         used_units = self._get_container_used_units(entities, container) if container else 0
@@ -2533,17 +2726,33 @@ class MonsterWorkshopGame:
         if container_metadata is not None and stored_type:
             container_metadata["stored_good_type"] = stored_type
 
+        output_spots = self._get_workshop_output_spots(workshop)
         creates: list[EntityCreate] = []
+        pending_outputs: list[dict[str, Any]] = []
+        workshop_metadata = dict(workshop.metadata_ or {})
+
         for _ in range(output_quantity):
             output_entry = recipe
             if self._is_raw_material_entry(recipe):
                 output_entry = self._roll_for_raw_material_type(recipe, crafter)
             quality = self._roll_for_quality(output_entry, crafter, input_items, tools)
             width, height = self._get_good_type_size(output_entry)
-            output_pos = self._get_workshop_output_position(workshop, width, height)
+
+            # Find an available output spot
+            output_pos = None
+            for spot_x, spot_y in output_spots:
+                if self._is_output_spot_available(entities, workshop, spot_x, spot_y, width, height):
+                    output_pos = (spot_x, spot_y)
+                    break
+
+            # Fallback to traditional output position calculation
             if output_pos is None:
-                continue
-            output_x, output_y = output_pos
+                output_pos = self._get_workshop_output_position(workshop, width, height)
+                if output_pos and not self._is_output_spot_available(
+                    entities, workshop, output_pos[0], output_pos[1], width, height
+                ):
+                    output_pos = None
+
             raw_materials, max_depth = self._calculate_raw_material_lineage(
                 output_entry,
                 input_items,
@@ -2566,13 +2775,34 @@ class MonsterWorkshopGame:
                 input_items,
                 workshop,
             )
-            store_in_container = False
             output_type = self._normalize_good_type_key(output_entry.get("name"))
+
+            # If no output position available, store as pending
+            if output_pos is None:
+                pending_outputs.append({
+                    "name": output_entry.get("name"),
+                    "good_type": output_type,
+                    "width": width,
+                    "height": height,
+                    "quality": quality,
+                    "weight": weight,
+                    "value": value,
+                    "carried_over_tags": carried_over_tags,
+                    "raw_materials": raw_materials,
+                    "raw_material_max_depth": max_depth,
+                    "tool_creators": tool_creators,
+                    "shares": shares,
+                    "crafter_id": str(crafter.id) if crafter else None,
+                    "crafter_owner_id": str(crafter.owner_id) if crafter else None,
+                })
+                continue
+
+            output_x, output_y = output_pos
+            store_in_container = False
             if container_metadata is not None:
                 if stored_type and output_type and stored_type != output_type:
                     store_in_container = False
                 else:
-                    # TODO: replace item_units once container capacity is material/quality-aware.
                     item_units = 1
                     if used_units + item_units <= container_capacity:
                         store_in_container = True
@@ -2606,7 +2836,105 @@ class MonsterWorkshopGame:
         if container is not None and container_metadata is not None:
             self._apply_metadata(container, container_metadata, updates)
 
+        # Update workshop blocked state
+        if pending_outputs:
+            workshop_metadata["is_blocked"] = True
+            workshop_metadata["pending_outputs"] = pending_outputs
+            workshop_metadata["blocked_reason"] = "Output spot occupied"
+        else:
+            workshop_metadata["is_blocked"] = False
+            workshop_metadata.pop("pending_outputs", None)
+            workshop_metadata.pop("blocked_reason", None)
+        self._apply_metadata(workshop, workshop_metadata, updates)
+
         return creates, output_quantity
+
+    def _process_pending_outputs(
+        self,
+        workshop: Entity,
+        entities: list[Entity],
+        creates: list[EntityCreate],
+        updates: list[EntityUpdate],
+    ) -> None:
+        """Try to place pending outputs when output spots become available."""
+        metadata = dict(workshop.metadata_ or {})
+        pending = list(metadata.get("pending_outputs", []))
+
+        if not pending:
+            return
+
+        output_spots = self._get_workshop_output_spots(workshop)
+        remaining_pending: list[dict[str, Any]] = []
+
+        for pending_item in pending:
+            width = pending_item.get("width", 2)
+            height = pending_item.get("height", 1)
+            placed = False
+
+            # Try each output spot
+            for spot_x, spot_y in output_spots:
+                if self._is_output_spot_available(entities, workshop, spot_x, spot_y, width, height):
+                    # Create the item from pending data
+                    output_create = self._create_output_item_from_pending(pending_item, spot_x, spot_y)
+                    if output_create:
+                        creates.append(output_create)
+                        placed = True
+                        break
+
+            if not placed:
+                remaining_pending.append(pending_item)
+
+        # Update workshop state
+        if remaining_pending:
+            metadata["pending_outputs"] = remaining_pending
+            metadata["is_blocked"] = True
+        else:
+            metadata.pop("pending_outputs", None)
+            metadata["is_blocked"] = False
+            metadata.pop("blocked_reason", None)
+
+        self._apply_metadata(workshop, metadata, updates)
+
+    def _create_output_item_from_pending(
+        self,
+        pending: dict[str, Any],
+        output_x: int,
+        output_y: int,
+    ) -> EntityCreate | None:
+        """Create an EntityCreate from pending output data."""
+        name = pending.get("name") or "Item"
+        good_type = pending.get("good_type") or self._normalize_good_type_key(name)
+        width = pending.get("width", 2)
+        height = pending.get("height", 1)
+
+        return EntityCreate(
+            x=output_x,
+            y=output_y,
+            width=width,
+            height=height,
+            metadata={
+                "kind": KIND_ITEM,
+                "name": name,
+                "good_type": good_type,
+                "size": [width, height],
+                "quality": pending.get("quality", 1.0),
+                "weight": pending.get("weight", 1),
+                "value": pending.get("value", 1),
+                "carried_over_tags": pending.get("carried_over_tags", []),
+                "raw_materials": pending.get("raw_materials", []),
+                "raw_material_max_depth": pending.get("raw_material_max_depth", 0),
+                "crafted_at": datetime.utcnow().isoformat(),
+                "producer_monster_id": pending.get("crafter_id"),
+                "producer_player_id": pending.get("crafter_owner_id"),
+                "tool_creator_player_ids": pending.get("tool_creators", []),
+                "shares": pending.get("shares", []),
+                "is_stored": False,
+                "container_id": None,
+                "stored_slot": None,
+                "last_transporter_monster_id": pending.get("crafter_id"),
+                "last_transporter_player_id": pending.get("crafter_owner_id"),
+            },
+        )
 
     def _create_output_item(
         self,
@@ -3287,14 +3615,16 @@ class MonsterWorkshopGame:
         if not self._is_in_bounds(new_x, new_y, pushed, zone_width, zone_height):
             return False
 
-        if self._is_terrain_blocked(zone_def, new_x, new_y):
+        if self._is_terrain_blocked(zone_def, new_x, new_y, entities):
             return False
 
         source_dispenser = self._find_entity_at_kind(entities, KIND_DISPENSER, original_x, original_y)
+        source_container = self._find_entity_at_kind(entities, KIND_CONTAINER, original_x, original_y)
         target_workshop = self._find_entity_at_kind(entities, KIND_WORKSHOP, new_x, new_y)
         if target_workshop is None:
             target_workshop = self._find_entity_at_kind(entities, KIND_GATHERING, new_x, new_y)
         target_dispenser = self._find_entity_at_kind(entities, KIND_DISPENSER, new_x, new_y)
+        target_container = self._find_entity_at_kind(entities, KIND_CONTAINER, new_x, new_y)
         target_delivery = self._find_entity_at_kind(entities, KIND_DELIVERY, new_x, new_y)
         target_wagon = self._find_entity_at_kind(entities, KIND_WAGON, new_x, new_y)
 
@@ -3353,6 +3683,34 @@ class MonsterWorkshopGame:
             self._apply_move(mover, mover.x + dx, mover.y + dy, updates)
             self._maybe_move_hitched_wagon(mover, old_mover_x, old_mover_y, entities, updates)
             touched_dispensers.add(target_dispenser.id)
+            if source_dispenser is not None:
+                touched_dispensers.add(source_dispenser.id)
+            return True
+
+        if target_container is not None:
+            blocker = self._find_blocker(
+                entities,
+                pushed,
+                new_x,
+                new_y,
+                ignore_ids={mover.id, pushed.id, target_container.id},
+            )
+            if blocker is not None:
+                return False
+            self._mark_last_transporter(pushed, mover, updates)
+            if not self._deposit_into_container(
+                item=pushed,
+                container=target_container,
+                slot_x=new_x,
+                slot_y=new_y,
+                entities=entities,
+                updates=updates,
+                events=events,
+            ):
+                return False
+
+            self._apply_move(mover, mover.x + dx, mover.y + dy, updates)
+            self._maybe_move_hitched_wagon(mover, old_mover_x, old_mover_y, entities, updates)
             if source_dispenser is not None:
                 touched_dispensers.add(source_dispenser.id)
             return True
@@ -3421,8 +3779,11 @@ class MonsterWorkshopGame:
         if blocker is not None:
             return False
 
-        if self._entity_kind(pushed) == KIND_WAGON:
+        pushed_kind = self._entity_kind(pushed)
+        if pushed_kind == KIND_WAGON:
             self._apply_wagon_move(pushed, new_x, new_y, entities, updates)
+        elif pushed_kind == KIND_CONTAINER:
+            self._apply_container_move(pushed, new_x, new_y, entities, updates)
         else:
             self._apply_move(pushed, new_x, new_y, updates)
             self._mark_last_transporter(pushed, mover, updates)
@@ -3432,16 +3793,80 @@ class MonsterWorkshopGame:
             touched_dispensers.add(source_dispenser.id)
         return True
 
-    def _is_terrain_blocked(self, zone_def: dict[str, Any] | None, x: int, y: int) -> bool:
-        if not zone_def:
-            return False
-        terrain = zone_def.get("terrain") or {}
-        blocked = zone_def.get("blocked") or zone_def.get("blocked_cells") or terrain.get("blocked") or []
-        for cell in blocked:
-            if isinstance(cell, (list, tuple)) and len(cell) >= 2:
-                if cell[0] == x and cell[1] == y:
-                    return True
+    def _is_terrain_blocked(
+        self,
+        zone_def: dict[str, Any] | None,
+        x: int,
+        y: int,
+        entities: list[Entity] | None = None,
+    ) -> bool:
+        if zone_def:
+            terrain = zone_def.get("terrain") or {}
+            blocked = zone_def.get("blocked") or zone_def.get("blocked_cells") or terrain.get("blocked") or []
+            for cell in blocked:
+                if isinstance(cell, (list, tuple)) and len(cell) >= 2:
+                    if cell[0] == x and cell[1] == y:
+                        return True
+
+        # Check workshop/gathering spot walls
+        if entities:
+            for entity in entities:
+                kind = self._entity_kind(entity)
+                if kind in (KIND_WORKSHOP, KIND_GATHERING):
+                    if self._is_workshop_wall_cell(entity, x, y):
+                        return True
+
         return False
+
+    def _is_workshop_wall_cell(self, workshop: Entity, x: int, y: int) -> bool:
+        """Check if (x, y) is a wall cell of this workshop."""
+        metadata = workshop.metadata_ or {}
+        if not metadata.get("has_walls", False):
+            return False
+
+        wx, wy = workshop.x, workshop.y
+        ww, wh = self._entity_size(workshop)
+
+        # Check if point is on the border
+        on_top = (y == wy) and (wx <= x < wx + ww)
+        on_bottom = (y == wy + wh - 1) and (wx <= x < wx + ww)
+        on_left = (x == wx) and (wy <= y < wy + wh)
+        on_right = (x == wx + ww - 1) and (wy <= y < wy + wh)
+
+        if not (on_top or on_bottom or on_left or on_right):
+            return False
+
+        # Check if it's a door (not blocked)
+        doors = metadata.get("doors", [])
+        for door in doors:
+            door_cells = self._get_door_cells(workshop, door)
+            if (x, y) in door_cells:
+                return False
+
+        return True
+
+    def _get_door_cells(self, workshop: Entity, door: dict) -> set[tuple[int, int]]:
+        """Get the set of cells that form a door opening."""
+        wx, wy = workshop.x, workshop.y
+        ww, wh = self._entity_size(workshop)
+        side = door.get("side", "bottom")
+        offset = door.get("offset", 0)
+        width = door.get("width", 1)
+
+        cells: set[tuple[int, int]] = set()
+        if side == "top":
+            for i in range(width):
+                cells.add((wx + offset + i, wy))
+        elif side == "bottom":
+            for i in range(width):
+                cells.add((wx + offset + i, wy + wh - 1))
+        elif side == "left":
+            for i in range(width):
+                cells.add((wx, wy + offset + i))
+        elif side == "right":
+            for i in range(width):
+                cells.add((wx + ww - 1, wy + offset + i))
+        return cells
 
     def _find_entity_at_kind(
         self,
@@ -3477,6 +3902,65 @@ class MonsterWorkshopGame:
     def _get_workshop_interior_bounds(self, workshop: Entity) -> tuple[int, int, int, int]:
         wx, wy, ww, wh = self._entity_rect(workshop)
         return wx + 1, wy + 1, wx + ww - 2, wy + wh - 2
+
+    def _get_workshop_input_spots(self, workshop: Entity) -> list[tuple[int, int]]:
+        """Get designated input deposit spots for a workshop."""
+        metadata = workshop.metadata_ or {}
+        wx, wy = workshop.x, workshop.y
+        input_spots = metadata.get("input_spots", [])
+
+        if input_spots:
+            return [(wx + spot.get("x", 0), wy + spot.get("y", 0)) for spot in input_spots]
+
+        # Default: left interior column (existing behavior)
+        min_x, min_y, _, max_y = self._get_workshop_interior_bounds(workshop)
+        return [(min_x, y) for y in range(min_y, max_y + 1)]
+
+    def _get_workshop_output_spots(self, workshop: Entity) -> list[tuple[int, int]]:
+        """Get designated output spots for a workshop."""
+        metadata = workshop.metadata_ or {}
+        wx, wy = workshop.x, workshop.y
+        output_spots = metadata.get("output_spots", [])
+
+        if output_spots:
+            return [(wx + spot.get("x", 0), wy + spot.get("y", 0)) for spot in output_spots]
+
+        # Default: bottom-right interior corner
+        anchor_x, anchor_y = self._get_workshop_output_anchor(workshop)
+        return [(anchor_x, anchor_y)]
+
+    def _is_output_spot_available(
+        self,
+        entities: list[Entity],
+        workshop: Entity,
+        x: int,
+        y: int,
+        item_width: int,
+        item_height: int,
+    ) -> bool:
+        """Check if an output spot is available for placing an item."""
+        # Check for blocking items at this position
+        for entity in entities:
+            if self._entity_kind(entity) != KIND_ITEM:
+                continue
+            metadata = entity.metadata_ or {}
+            # Skip items that are stored inside containers
+            if metadata.get("is_stored"):
+                continue
+            if self._rects_overlap(x, y, item_width, item_height, *self._entity_rect(entity)):
+                return False
+
+        # Check for full containers at output spot
+        container = self._find_entity_at_kind(entities, KIND_CONTAINER, x, y)
+        if container is None:
+            container = self._find_entity_at_kind(entities, KIND_DISPENSER, x, y)
+        if container:
+            used = self._get_container_used_units(entities, container)
+            capacity = self._get_container_capacity(container)
+            if used >= capacity:
+                return False
+
+        return True
 
     def _get_workshop_recipes(self, workshop: Entity) -> list[dict[str, Any]]:
         if self._is_gathering_spot(workshop):
@@ -3668,6 +4152,49 @@ class MonsterWorkshopGame:
             "type": "dispenser_deposit",
             "entity_id": str(item.id),
             "dispenser_id": str(dispenser.id),
+        })
+        return True
+
+    def _deposit_into_container(
+        self,
+        item: Entity,
+        container: Entity,
+        slot_x: int,
+        slot_y: int,
+        entities: list[Entity],
+        updates: list[EntityUpdate],
+        events: list[dict[str, Any]],
+    ) -> bool:
+        """Push an item into a container for storage."""
+        item_metadata = dict(item.metadata_ or {})
+        container_metadata = dict(container.metadata_ or {})
+
+        if not self._container_accepts_item(container, item, entities):
+            return False
+
+        item_type = self._normalize_good_type_key(item_metadata.get("good_type"))
+        stored_type = self._normalize_good_type_key(container_metadata.get("stored_good_type"))
+        if stored_type and item_type and stored_type != item_type:
+            return False
+
+        if stored_type:
+            container_metadata["stored_good_type"] = stored_type
+        elif item_type:
+            container_metadata["stored_good_type"] = item_type
+
+        self._ensure_item_size_metadata(item_metadata)
+        item_metadata["is_stored"] = True
+        item_metadata["container_id"] = str(container.id)
+        item_metadata["stored_slot"] = {"x": slot_x, "y": slot_y}
+
+        self._apply_move(item, slot_x, slot_y, updates)
+        self._apply_metadata(item, item_metadata, updates)
+        self._apply_metadata(container, container_metadata, updates)
+
+        events.append({
+            "type": "container_deposit",
+            "entity_id": str(item.id),
+            "container_id": str(container.id),
         })
         return True
 
@@ -4003,7 +4530,7 @@ class MonsterWorkshopGame:
             x = int(candidate.get("x", 0))
             y = int(candidate.get("y", 0))
             if 0 <= x < zone_width and 0 <= y < zone_height:
-                if self._is_terrain_blocked(zone_def, x, y):
+                if self._is_terrain_blocked(zone_def, x, y, entities):
                     continue
                 if self._find_blocker(entities, self._fake_entity(x, y), x, y) is None:
                     return x, y

@@ -1,8 +1,42 @@
 """Sprite definitions and Unicode character mappings for all entity types."""
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import Color
+
+
+# Double-line Unicode box-drawing characters for workshop walls
+WALL_CHARS = {
+    "top_left": "╔",
+    "top_right": "╗",
+    "bottom_left": "╚",
+    "bottom_right": "╝",
+    "horizontal": "═",
+    "vertical": "║",
+}
+
+# Workshop interior icons by type
+WORKSHOP_INTERIOR_ICONS = {
+    "spinning": "~",
+    "weaving": "#",
+    "dyeing": "▒",
+    "sericulture": "@",
+    "smithing": "▲",
+    "casting": "▲",
+    "blacksmithing": "▲",
+    "pottery": "○",
+    "milling": ":",
+    "confectionery": "o",
+    "carpentry": "-",
+    "default": "·",
+}
+
+# Spot markers for designated workshop areas
+SPOT_MARKERS = {
+    "input": "▫",     # Small white square
+    "output": "▪",    # Small black square
+    "crafting": "✦",  # Star for crafting position
+}
 
 
 # Monster sprites (1x1)
@@ -224,6 +258,7 @@ WAGON_LOADED = """[##]
 # Other entity sprites
 OTHER_SPRITES = {
     "dispenser": ("D", Color.DISPENSER),
+    "container": ("▣", Color.CONTAINER),
     "signpost": ("!", Color.SIGNPOST),
     "terrain_block": ("#", Color.TERRAIN),
     "commune": ("*", Color.COMMUNE),
@@ -311,11 +346,113 @@ def _derive_item_color(metadata: Dict, good_type: str) -> Tuple[int, int, int]:
     return Color.ITEM_DEFAULT
 
 
-def get_workshop_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, int, int]]:
+def generate_workshop_pattern(
+    width: int,
+    height: int,
+    workshop_type: str,
+    doors: List[Dict[str, Any]],
+    input_spots: Optional[List[Dict[str, int]]] = None,
+    output_spots: Optional[List[Dict[str, int]]] = None,
+    crafting_spot: Optional[Dict[str, int]] = None,
+) -> str:
+    """Generate a workshop pattern with walls and designated spots.
+
+    Args:
+        width: Workshop width in cells
+        height: Workshop height in cells
+        workshop_type: Type of workshop for interior icon
+        doors: List of door definitions [{"side": "bottom", "offset": 2, "width": 2}]
+        input_spots: List of input spot positions [{"x": 1, "y": 1}]
+        output_spots: List of output spot positions [{"x": 4, "y": 4}]
+        crafting_spot: Position of crafting spot {"x": 2, "y": 2}
+
+    Returns:
+        Multi-line pattern string with Unicode box-drawing walls
+    """
+    interior_icon = WORKSHOP_INTERIOR_ICONS.get(workshop_type, WORKSHOP_INTERIOR_ICONS["default"])
+
+    # Build door cell lookup
+    door_cells = set()
+    for door in doors:
+        side = door.get("side", "bottom")
+        offset = door.get("offset", 0)
+        door_width = door.get("width", 2)
+
+        for i in range(door_width):
+            if side == "top":
+                door_cells.add((offset + i, 0))
+            elif side == "bottom":
+                door_cells.add((offset + i, height - 1))
+            elif side == "left":
+                door_cells.add((0, offset + i))
+            elif side == "right":
+                door_cells.add((width - 1, offset + i))
+
+    # Build spot lookups (positions are relative to workshop top-left)
+    input_cells = set()
+    for spot in (input_spots or []):
+        input_cells.add((spot.get("x", 0), spot.get("y", 0)))
+
+    output_cells = set()
+    for spot in (output_spots or []):
+        output_cells.add((spot.get("x", 0), spot.get("y", 0)))
+
+    crafting_cell = None
+    if crafting_spot:
+        crafting_cell = (crafting_spot.get("x", 0), crafting_spot.get("y", 0))
+
+    rows = []
+    for y in range(height):
+        row = ""
+        for x in range(width):
+            is_door = (x, y) in door_cells
+            is_corner = (x == 0 or x == width - 1) and (y == 0 or y == height - 1)
+            is_top = y == 0
+            is_bottom = y == height - 1
+            is_left = x == 0
+            is_right = x == width - 1
+
+            if is_door:
+                row += " "
+            elif is_corner:
+                if x == 0 and y == 0:
+                    row += WALL_CHARS["top_left"]
+                elif x == width - 1 and y == 0:
+                    row += WALL_CHARS["top_right"]
+                elif x == 0 and y == height - 1:
+                    row += WALL_CHARS["bottom_left"]
+                else:
+                    row += WALL_CHARS["bottom_right"]
+            elif is_top or is_bottom:
+                row += WALL_CHARS["horizontal"]
+            elif is_left or is_right:
+                row += WALL_CHARS["vertical"]
+            elif (x, y) == crafting_cell:
+                row += SPOT_MARKERS["crafting"]
+            elif (x, y) in input_cells:
+                row += SPOT_MARKERS["input"]
+            elif (x, y) in output_cells:
+                row += SPOT_MARKERS["output"]
+            else:
+                # Interior cell
+                row += interior_icon
+
+        rows.append(row)
+
+    return "\n".join(rows)
+
+
+def get_workshop_sprite_def(
+    metadata: Dict[str, Any],
+    width: int = 4,
+    height: int = 4,
+) -> Tuple[str, Tuple[int, int, int]]:
     """Get sprite definition for a workshop.
 
     Args:
         metadata: Entity metadata
+        width: Workshop width in cells
+        height: Workshop height in cells
 
     Returns:
         Tuple of (pattern, color)
@@ -357,8 +494,25 @@ def get_workshop_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, i
     if workshop_type is None:
         workshop_type = "default"
 
-    pattern = WORKSHOP_PATTERNS.get(workshop_type, WORKSHOP_PATTERNS["default"])
     color = WORKSHOP_COLORS.get(workshop_type, WORKSHOP_COLORS["default"])
+
+    # Check if workshop has walls (use dynamic pattern generation)
+    if metadata.get("has_walls", False):
+        doors = metadata.get("doors", [])
+        input_spots = metadata.get("input_spots", [])
+        output_spots = metadata.get("output_spots", [])
+        crafting_spot = metadata.get("crafting_spot")
+        pattern = generate_workshop_pattern(
+            width,
+            height,
+            workshop_type,
+            doors,
+            input_spots,
+            output_spots,
+            crafting_spot,
+        )
+    else:
+        pattern = WORKSHOP_PATTERNS.get(workshop_type, WORKSHOP_PATTERNS["default"])
 
     return pattern, color
 
@@ -441,7 +595,9 @@ def get_sprite_def(entity: Dict[str, Any], player_id: Optional[str] = None) -> T
         return get_item_sprite_def(metadata)
 
     elif kind == "workshop":
-        return get_workshop_sprite_def(metadata)
+        width = entity.get("width", 4)
+        height = entity.get("height", 4)
+        return get_workshop_sprite_def(metadata, width, height)
 
     elif kind == "gathering_spot":
         return get_gathering_spot_sprite_def(metadata)

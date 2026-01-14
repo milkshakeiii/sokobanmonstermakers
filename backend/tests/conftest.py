@@ -266,6 +266,65 @@ def make_dispenser(
     )
 
 
+def make_container(
+    x: int,
+    y: int,
+    stored_good_type: str = None,
+    capacity: int = 10,
+    **extra_metadata
+) -> MockEntity:
+    """Helper to create a container entity."""
+    metadata = {
+        "kind": "container",
+        "capacity": capacity,
+        **extra_metadata,
+    }
+    if stored_good_type:
+        metadata["stored_good_type"] = stored_good_type
+    return MockEntity(
+        x=x,
+        y=y,
+        width=1,
+        height=1,
+        owner_id=None,
+        metadata_=metadata,
+    )
+
+
+def make_walled_workshop(
+    x: int,
+    y: int,
+    workshop_type: str = "spinning",
+    width: int = 6,
+    height: int = 6,
+    doors: list = None,
+    input_spots: list = None,
+    output_spots: list = None,
+    crafting_spot: dict = None,
+    **extra_metadata
+) -> MockEntity:
+    """Helper to create a workshop with walls."""
+    metadata = {
+        "kind": "workshop",
+        "workshop_type": workshop_type,
+        "has_walls": True,
+        "blocks_movement": False,  # Entity doesn't block; walls do
+        "doors": doors or [{"side": "bottom", "offset": 2, "width": 2}],
+        "input_spots": input_spots or [{"x": 1, "y": 1}],
+        "output_spots": output_spots or [{"x": 4, "y": 4}],
+        "crafting_spot": crafting_spot or {"x": 2, "y": 2},
+        **extra_metadata,
+    }
+    return MockEntity(
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        owner_id=None,
+        metadata_=metadata,
+    )
+
+
 def make_wagon(
     x: int,
     y: int,

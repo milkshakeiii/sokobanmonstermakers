@@ -10,17 +10,20 @@
       "kind": "workshop",
       "x": 10,
       "y": 4,
-      "width": 4,
-      "height": 4,
+      "width": 6,
+      "height": 6,
       "metadata": {
         "workshop_type": "spinning",
+        "has_walls": true,
         "blocks_movement": false,
-        "input_slots": [],
-        "output_slots": []
+        "doors": [{"side": "bottom", "offset": 2, "width": 2}],
+        "input_spots": [{"x": 1, "y": 1}, {"x": 1, "y": 2}],
+        "output_spots": [{"x": 4, "y": 4}],
+        "crafting_spot": {"x": 2, "y": 2}
       }
     },
     {
-      "kind": "dispenser",
+      "kind": "container",
       "x": 20,
       "y": 4,
       "width": 1,
