@@ -850,6 +850,10 @@ class MonsterWorkshopGame:
             })
             return
 
+        # TODO: Add workshop specialization. Update good_types.json to change
+        # requires_workshop from True to a string (e.g., "kiln", "forge", "dye_works").
+        # Use primary_applied_skill as a hint for grouping. Then add matching workshops
+        # to zone JSON with workshop_type set accordingly.
         workshop_type = metadata.get("workshop_type", "general")
         requires_workshop = recipe_entry.get("requires_workshop")
         if isinstance(requires_workshop, str):
