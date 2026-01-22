@@ -167,6 +167,7 @@ class MonsterWorkshopGame:
         self._monster_types = self._load_monster_types()
         self._skill_defs = self._load_skill_defs()
         self._transferable_skills = self._skill_defs.get("transferable_skills", DEFAULT_TRANSFERABLE_SKILLS)
+        self._sprite_meta = self._load_sprite_metadata()
 
     async def on_init(self, framework: FrameworkAPI) -> None:
         """Ensure zones exist and map IDs to definitions."""
@@ -2781,9 +2782,12 @@ class MonsterWorkshopGame:
             )
             output_type = self._normalize_good_type_key(output_entry.get("name"))
 
+            # Calculate effective color for sprite rendering
+            effective_color = self._get_effective_color(output_type or "", input_items)
+
             # If no output position available, store as pending
             if output_pos is None:
-                pending_outputs.append({
+                pending_data: dict[str, Any] = {
                     "name": output_entry.get("name"),
                     "good_type": output_type,
                     "width": width,
@@ -2798,7 +2802,10 @@ class MonsterWorkshopGame:
                     "shares": shares,
                     "crafter_id": str(crafter.id) if crafter else None,
                     "crafter_owner_id": str(crafter.owner_id) if crafter else None,
-                })
+                }
+                if effective_color is not None:
+                    pending_data["effective_color"] = list(effective_color)
+                pending_outputs.append(pending_data)
                 continue
 
             output_x, output_y = output_pos
@@ -2833,6 +2840,7 @@ class MonsterWorkshopGame:
                 store_in_container,
                 container.id if store_in_container and container else None,
                 {"x": anchor_x, "y": anchor_y} if store_in_container else None,
+                effective_color,
             )
             if output_create is not None:
                 creates.append(output_create)
@@ -2911,33 +2919,38 @@ class MonsterWorkshopGame:
         width = pending.get("width", 2)
         height = pending.get("height", 1)
 
+        metadata = {
+            "kind": KIND_ITEM,
+            "name": name,
+            "good_type": good_type,
+            "size": [width, height],
+            "quality": pending.get("quality", 1.0),
+            "weight": pending.get("weight", 1),
+            "value": pending.get("value", 1),
+            "carried_over_tags": pending.get("carried_over_tags", []),
+            "raw_materials": pending.get("raw_materials", []),
+            "raw_material_max_depth": pending.get("raw_material_max_depth", 0),
+            "crafted_at": datetime.utcnow().isoformat(),
+            "producer_monster_id": pending.get("crafter_id"),
+            "producer_player_id": pending.get("crafter_owner_id"),
+            "tool_creator_player_ids": pending.get("tool_creators", []),
+            "shares": pending.get("shares", []),
+            "is_stored": False,
+            "container_id": None,
+            "stored_slot": None,
+            "last_transporter_monster_id": pending.get("crafter_id"),
+            "last_transporter_player_id": pending.get("crafter_owner_id"),
+        }
+        effective_color = pending.get("effective_color")
+        if effective_color is not None:
+            metadata["effective_color"] = effective_color
+
         return EntityCreate(
             x=output_x,
             y=output_y,
             width=width,
             height=height,
-            metadata={
-                "kind": KIND_ITEM,
-                "name": name,
-                "good_type": good_type,
-                "size": [width, height],
-                "quality": pending.get("quality", 1.0),
-                "weight": pending.get("weight", 1),
-                "value": pending.get("value", 1),
-                "carried_over_tags": pending.get("carried_over_tags", []),
-                "raw_materials": pending.get("raw_materials", []),
-                "raw_material_max_depth": pending.get("raw_material_max_depth", 0),
-                "crafted_at": datetime.utcnow().isoformat(),
-                "producer_monster_id": pending.get("crafter_id"),
-                "producer_player_id": pending.get("crafter_owner_id"),
-                "tool_creator_player_ids": pending.get("tool_creators", []),
-                "shares": pending.get("shares", []),
-                "is_stored": False,
-                "container_id": None,
-                "stored_slot": None,
-                "last_transporter_monster_id": pending.get("crafter_id"),
-                "last_transporter_player_id": pending.get("crafter_owner_id"),
-            },
+            metadata=metadata,
         )
 
     def _create_output_item(
@@ -2959,36 +2972,40 @@ class MonsterWorkshopGame:
         store_in_container: bool,
         container_id: UUID | None,
         stored_slot: dict[str, int] | None,
+        effective_color: tuple[int, int, int] | None = None,
     ) -> EntityCreate | None:
         name = output_entry.get("name") or "Item"
         good_type = self._normalize_good_type_key(name)
+        metadata = {
+            "kind": KIND_ITEM,
+            "name": name,
+            "good_type": good_type,
+            "size": [width, height],
+            "quality": quality,
+            "weight": weight,
+            "value": value,
+            "carried_over_tags": carried_over_tags,
+            "raw_materials": raw_materials,
+            "raw_material_max_depth": max_depth,
+            "crafted_at": datetime.utcnow().isoformat(),
+            "producer_monster_id": str(crafter.id) if crafter else None,
+            "producer_player_id": str(crafter.owner_id) if crafter else None,
+            "tool_creator_player_ids": tool_creators,
+            "shares": shares,
+            "is_stored": bool(store_in_container),
+            "container_id": str(container_id) if container_id else None,
+            "stored_slot": stored_slot if store_in_container else None,
+            "last_transporter_monster_id": str(crafter.id) if crafter else None,
+            "last_transporter_player_id": str(crafter.owner_id) if crafter else None,
+        }
+        if effective_color is not None:
+            metadata["effective_color"] = list(effective_color)
         return EntityCreate(
             x=output_x,
             y=output_y,
             width=width,
             height=height,
-            metadata={
-                "kind": KIND_ITEM,
-                "name": name,
-                "good_type": good_type,
-                "size": [width, height],
-                "quality": quality,
-                "weight": weight,
-                "value": value,
-                "carried_over_tags": carried_over_tags,
-                "raw_materials": raw_materials,
-                "raw_material_max_depth": max_depth,
-                "crafted_at": datetime.utcnow().isoformat(),
-                "producer_monster_id": str(crafter.id) if crafter else None,
-                "producer_player_id": str(crafter.owner_id) if crafter else None,
-                "tool_creator_player_ids": tool_creators,
-                "shares": shares,
-                "is_stored": bool(store_in_container),
-                "container_id": str(container_id) if container_id else None,
-                "stored_slot": stored_slot if store_in_container else None,
-                "last_transporter_monster_id": str(crafter.id) if crafter else None,
-                "last_transporter_player_id": str(crafter.owner_id) if crafter else None,
-            },
+            metadata=metadata,
         )
 
     def _get_item_shares(self, metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -4749,6 +4766,83 @@ class MonsterWorkshopGame:
         payload["relevant_transferable_skills"] = normalized_relevant
 
         return payload
+
+    def _load_sprite_metadata(self) -> dict[str, dict[str, Any]]:
+        """Load sprite color metadata from client assets."""
+        # Navigate from backend/ to client/rendering/assets/items/
+        base_dir = Path(__file__).resolve().parents[2]
+        assets_dir = base_dir / "client" / "rendering" / "assets" / "items"
+        if not assets_dir.exists():
+            return {}
+
+        sprite_meta: dict[str, dict[str, Any]] = {}
+        for json_path in assets_dir.glob("*.json"):
+            try:
+                data = json.loads(json_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            # Use filename (without .json) as the key, normalized
+            key = json_path.stem.lower().replace("_", " ")
+            meta: dict[str, Any] = {}
+
+            color_role = data.get("color_role")
+            if color_role:
+                meta["color_role"] = color_role
+
+            source_color = data.get("source_color")
+            if source_color and isinstance(source_color, list) and len(source_color) >= 3:
+                meta["source_color"] = tuple(source_color[:3])
+
+            color_input_index = data.get("color_input_index")
+            if color_input_index is not None:
+                try:
+                    meta["color_input_index"] = int(color_input_index)
+                except (TypeError, ValueError):
+                    pass
+
+            if meta:
+                sprite_meta[key] = meta
+
+        return sprite_meta
+
+    def _get_effective_color(
+        self,
+        good_type: str,
+        input_items: list[Entity],
+    ) -> tuple[int, int, int] | None:
+        """Calculate the effective color for a crafted item.
+
+        For takers: inherits color from input at color_input_index.
+        For sources: returns their source_color.
+        Otherwise: returns None.
+        """
+        key = good_type.lower().replace("_", " ")
+        meta = self._sprite_meta.get(key)
+        if not meta:
+            return None
+
+        color_role = meta.get("color_role")
+        if color_role == "source":
+            return meta.get("source_color")
+
+        if color_role == "taker":
+            color_input_index = meta.get("color_input_index", 0)
+            if color_input_index < len(input_items):
+                input_item = input_items[color_input_index]
+                input_metadata = input_item.metadata_ or {}
+                # Check if input has an effective_color already (chain inheritance)
+                effective = input_metadata.get("effective_color")
+                if effective and isinstance(effective, (list, tuple)) and len(effective) >= 3:
+                    return tuple(effective[:3])
+                # Otherwise check if input is a source
+                input_good_type = input_metadata.get("good_type", "")
+                input_key = input_good_type.lower().replace("_", " ")
+                input_meta = self._sprite_meta.get(input_key)
+                if input_meta and input_meta.get("color_role") == "source":
+                    return input_meta.get("source_color")
+
+        return None
 
     def _fake_entity(self, x: int, y: int) -> Entity:
         fake = Entity(zone_id=UUID(int=0), x=x, y=y, width=1, height=1)

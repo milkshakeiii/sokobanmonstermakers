@@ -1,0 +1,9 @@
+{
+  "name": "canary yellow dye",
+  "color_role": "source",
+  "source_color": [
+    255,
+    240,
+    60
+  ]
+}

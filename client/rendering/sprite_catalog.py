@@ -5,6 +5,134 @@ from typing import Any, Dict, List, Optional, Tuple
 from config import Color
 
 
+# Set of all available PNG item sprites (filename stems without .png)
+# Items in this set will use pixel sprites instead of Unicode
+PIXEL_SPRITE_ITEMS = {
+    "alum_found",
+    "ash_glaze",
+    "barley_stalks",
+    "bast_fiber",
+    "black_clay",
+    "black_dye",
+    "blue_clay",
+    "bricks",
+    "bright_green_dye",
+    "brown_sugar_cane",
+    "canary_yellow_dye",
+    "ceramic_cup",
+    "ceramic_pot_mold",
+    "ceramic_sycee_mold",
+    "clay_palace_bricks",
+    "clay_palace_tiles",
+    "clay_tiles",
+    "climbing_hempvine_stalks",
+    "coal",
+    "coke",
+    "cotton_bolls",
+    "cotton_seeds",
+    "cotton_slivers",
+    "crimson_dye",
+    "dark_barley_stalks",
+    "dark_green_dye",
+    "decorated_ceramic",
+    "deep_sky_blue_dye",
+    "die",
+    "die_pattern",
+    "dyed_fabric",
+    "eggshell_blue_dye",
+    "fabric",
+    "file",
+    "flail",
+    "flour",
+    "flour_powered",
+    "gallnuts",
+    "golden_yellow_dye",
+    "great_metal_statue",
+    "green_vitriol",
+    "green_vitriol_found",
+    "hemp_stalks",
+    "hulled_grain",
+    "hungry_rice_stalks",
+    "indigo",
+    "indigofera_leaves",
+    "knife",
+    "kudzu_stalks",
+    "large_mirror",
+    "light_green_dye",
+    "little_millet_stalks",
+    "lotus_blossoms",
+    "lye",
+    "malt",
+    "metal_anvil",
+    "metal_axe",
+    "metal_chisel",
+    "metal_hammer",
+    "metal_pot",
+    "mirror_pattern",
+    "nail",
+    "needle",
+    "oyster_lime",
+    "palace_glaze",
+    "pigweed_indigo_leaves",
+    "pink_dye",
+    "plums",
+    "porcelain_clay_paste",
+    "purple_dye",
+    "ramie_stalks",
+    "red_clay",
+    "rice_stalks",
+    "rice_stalks_irrigated",
+    "rope",
+    "royal_blue_dyed_fabric",
+    "safflower_blossoms",
+    "safflower_cakes",
+    "safflower_seeds",
+    "sand_mold",
+    "saw",
+    "scholartree_bud_cakes",
+    "scholartree_buds",
+    "sea_salt",
+    "seeth_water",
+    "sesame_stalks",
+    "shaped_candy",
+    "silk_thread",
+    "silkworm_cacoons",
+    "sorghum_stalks",
+    "stone_anvil",
+    "stone_hammer",
+    "sugar",
+    "sycee",
+    "tea_brown_dye",
+    "temple_bell",
+    "thread",
+    "velvetleaf_stalks",
+    "well_salt",
+    "wheat_stalks",
+    "white_clay",
+    "white_sugar_cane",
+    "whole_grain",
+    "wire",
+    "wood_red_dye",
+    "yellow_clay",
+    "yellow_dye",
+}
+
+
+def has_pixel_sprite(good_type: str) -> bool:
+    """Check if a good_type has a pixel sprite available."""
+    # Normalize good_type to sprite name format
+    sprite_name = good_type.lower().replace(" ", "_")
+    return sprite_name in PIXEL_SPRITE_ITEMS
+
+
+def get_pixel_sprite_name(good_type: str) -> Optional[str]:
+    """Get the pixel sprite name for a good_type, or None if not available."""
+    sprite_name = good_type.lower().replace(" ", "_")
+    if sprite_name in PIXEL_SPRITE_ITEMS:
+        return sprite_name
+    return None
+
+
 # Double-line Unicode box-drawing characters for workshop walls
 WALL_CHARS = {
     "top_left": "╔",
@@ -288,8 +416,21 @@ def get_monster_sprite_def(
     return sprites[key], colors[key]
 
 
+def get_item_pixel_sprite_name(metadata: Dict[str, Any]) -> Optional[str]:
+    """Get pixel sprite name for an item if available.
+
+    Args:
+        metadata: Entity metadata containing good_type
+
+    Returns:
+        Sprite name if pixel sprite exists, None otherwise
+    """
+    good_type = metadata.get("good_type", "")
+    return get_pixel_sprite_name(good_type)
+
+
 def get_item_sprite_def(metadata: Dict[str, Any]) -> Tuple[str, Tuple[int, int, int]]:
-    """Get sprite definition for an item.
+    """Get sprite definition for an item (Unicode fallback).
 
     Args:
         metadata: Entity metadata containing good_type, type_tags, etc.

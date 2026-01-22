@@ -1,0 +1,9 @@
+{
+  "name": "wood red dye",
+  "color_role": "source",
+  "source_color": [
+    140,
+    40,
+    30
+  ]
+}

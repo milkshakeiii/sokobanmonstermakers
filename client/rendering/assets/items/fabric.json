@@ -1,0 +1,19 @@
+{
+  "name": "folded fabric cloth",
+  "palette": [
+    [
+      202,
+      202,
+      202,
+      255
+    ],
+    [
+      255,
+      255,
+      255,
+      255
+    ]
+  ],
+  "color_role": "taker",
+  "color_input_index": 0
+}

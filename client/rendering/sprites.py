@@ -2,7 +2,7 @@
 
 import sys
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 # Add pyunicodegame to path
 sys.path.insert(0, os.path.expanduser("~/Documents/github/pyunicodegame/src"))
@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.expanduser("~/Documents/github/pyunicodegame/src"))
 import pyunicodegame
 
 from config import SPRITE_LERP_SPEED
-from rendering.sprite_catalog import get_sprite_def
+from rendering.sprite_catalog import get_sprite_def, get_item_pixel_sprite_name
+from rendering.pixel_sprite_loader import get_loader as get_pixel_loader
 
 
 class SpriteFactory:
@@ -26,26 +27,45 @@ class SpriteFactory:
         self.game_window = game_window
         self.player_id = player_id
 
-        # Sprite storage: entity_id -> sprite
-        self.sprites: Dict[str, pyunicodegame.Sprite] = {}
+        # Sprite storage: entity_id -> sprite (can be Sprite or PixelSprite)
+        self.sprites: Dict[str, Union[pyunicodegame.Sprite, pyunicodegame.PixelSprite]] = {}
 
         # Track entity metadata for update detection
         self._entity_cache: Dict[str, Dict] = {}
+
+        # Initialize pixel sprite loader
+        self._pixel_loader = get_pixel_loader()
 
     def set_player_id(self, player_id: str):
         """Set the player ID for ownership detection."""
         self.player_id = player_id
 
-    def create_sprite(self, entity: Dict[str, Any]) -> pyunicodegame.Sprite:
+    def create_sprite(
+        self,
+        entity: Dict[str, Any],
+    ) -> Union[pyunicodegame.Sprite, pyunicodegame.PixelSprite]:
         """Create a sprite for an entity.
 
         Args:
             entity: Entity data dict from server
 
         Returns:
-            The created sprite
+            The created sprite (unicode or pixel)
         """
         eid = entity["id"]
+        metadata = entity.get("metadata", {})
+        kind = metadata.get("kind")
+
+        # Check if this is an item with a pixel sprite
+        if kind == "item":
+            sprite = self._try_create_pixel_sprite(entity)
+            if sprite is not None:
+                self.sprites[eid] = sprite
+                self._entity_cache[eid] = self._cache_key(entity)
+                self.game_window.add_sprite(sprite)
+                return sprite
+
+        # Fall back to Unicode sprite
         pattern, color = get_sprite_def(entity, self.player_id)
 
         sprite = pyunicodegame.create_sprite(
@@ -59,6 +79,57 @@ class SpriteFactory:
         self.sprites[eid] = sprite
         self._entity_cache[eid] = self._cache_key(entity)
         self.game_window.add_sprite(sprite)
+
+        return sprite
+
+    def _try_create_pixel_sprite(
+        self,
+        entity: Dict[str, Any],
+    ) -> Optional[pyunicodegame.PixelSprite]:
+        """Try to create a pixel sprite for an item entity.
+
+        Args:
+            entity: Entity data dict
+
+        Returns:
+            PixelSprite if available, None otherwise
+        """
+        metadata = entity.get("metadata", {})
+        good_type = metadata.get("good_type", "")
+
+        # Check if pixel sprite exists for this good_type
+        sprite_name = get_item_pixel_sprite_name(metadata)
+        if sprite_name is None:
+            return None
+
+        # Get effective_color from metadata (for color inheritance)
+        effective_color = metadata.get("effective_color")
+        if effective_color is not None and isinstance(effective_color, (list, tuple)):
+            effective_color = tuple(effective_color[:3])
+        else:
+            effective_color = None
+
+        # Get the sprite surface
+        surface = self._pixel_loader.get_sprite_surface(sprite_name, effective_color)
+        if surface is None:
+            return None
+
+        # Get cell dimensions
+        cell_width, cell_height = self.game_window.cell_size
+
+        # Validate surface dimensions (must be multiples of cell size)
+        surf_width, surf_height = surface.get_size()
+        if surf_width % cell_width != 0 or surf_height % cell_height != 0:
+            # Surface doesn't align with cell grid, fall back to Unicode
+            return None
+
+        # Create PixelFrame and PixelSprite
+        frame = pyunicodegame.PixelFrame(surface, cell_width, cell_height)
+        sprite = pyunicodegame.PixelSprite([frame])
+        sprite.x = entity["x"]
+        sprite.y = entity["y"]
+        sprite._teleport_pending = True
+        sprite.lerp_speed = SPRITE_LERP_SPEED
 
         return sprite
 
@@ -169,6 +240,14 @@ class SpriteFactory:
         Used to detect when a sprite needs to be recreated.
         """
         metadata = entity.get("metadata", {})
+
+        # Extract effective_color as tuple for hashability
+        effective_color = metadata.get("effective_color")
+        if effective_color is not None and isinstance(effective_color, (list, tuple)):
+            effective_color = tuple(effective_color[:3])
+        else:
+            effective_color = None
+
         return {
             "owner_id": entity.get("owner_id"),
             "kind": metadata.get("kind"),
@@ -176,6 +255,7 @@ class SpriteFactory:
             "good_type": metadata.get("good_type"),
             "is_crafting": metadata.get("is_crafting"),
             "loaded_item_ids": len(metadata.get("loaded_item_ids", [])) > 0,
+            "effective_color": effective_color,
         }
 
 

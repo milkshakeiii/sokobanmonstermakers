@@ -1,0 +1,37 @@
+{
+  "name": "isometric wooden spool completely full of grey thread touching the wooden ends",
+  "palette": [
+    [
+      78,
+      44,
+      16,
+      255
+    ],
+    [
+      30,
+      74,
+      0,
+      255
+    ],
+    [
+      110,
+      65,
+      27,
+      255
+    ],
+    [
+      144,
+      144,
+      144,
+      255
+    ],
+    [
+      180,
+      180,
+      180,
+      255
+    ]
+  ],
+  "color_role": "taker",
+  "color_input_index": 0
+}

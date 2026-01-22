@@ -1,0 +1,9 @@
+{
+  "name": "yellow dye",
+  "color_role": "source",
+  "source_color": [
+    255,
+    220,
+    50
+  ]
+}

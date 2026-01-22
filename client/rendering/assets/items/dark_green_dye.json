@@ -1,0 +1,9 @@
+{
+  "name": "dark green dye",
+  "color_role": "source",
+  "source_color": [
+    30,
+    90,
+    40
+  ]
+}

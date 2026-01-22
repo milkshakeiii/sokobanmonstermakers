@@ -61,6 +61,116 @@
       "metadata": {
         "destination": "Wilderness"
       }
+    },
+    {
+      "kind": "item",
+      "x": 5,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "cotton_bolls",
+        "name": "Cotton Bolls"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 8,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "fabric",
+        "name": "Fabric"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 11,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "thread",
+        "name": "Thread"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 14,
+      "y": 12,
+      "width": 3,
+      "height": 1,
+      "metadata": {
+        "good_type": "crimson_dye",
+        "name": "Crimson Dye"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 18,
+      "y": 12,
+      "width": 4,
+      "height": 3,
+      "metadata": {
+        "good_type": "great_metal_statue",
+        "name": "Great Metal Statue"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 23,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "silk_thread",
+        "name": "Silk Thread"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 26,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "flour",
+        "name": "Flour"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 29,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "knife",
+        "name": "Knife"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 32,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "needle",
+        "name": "Needle"
+      }
+    },
+    {
+      "kind": "item",
+      "x": 35,
+      "y": 12,
+      "width": 2,
+      "height": 1,
+      "metadata": {
+        "good_type": "sycee",
+        "name": "Sycee"
+      }
     }
   ]
 }

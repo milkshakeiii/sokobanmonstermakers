@@ -1,0 +1,9 @@
+{
+  "name": "purple dye",
+  "color_role": "source",
+  "source_color": [
+    120,
+    40,
+    160
+  ]
+}
